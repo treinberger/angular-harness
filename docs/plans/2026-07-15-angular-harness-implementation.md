@@ -1,25 +1,26 @@
-# Angular Project Harness — Implementation Plan
+# Angular Project Harness — Implementation Plan (v2, SOTA)
 
 > **For agentic workers:** Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Each task ends with a passing verification step and a commit. Do not start a task before the previous one is committed. If a `superpowers:subagent-driven-development` or `superpowers:executing-plans` skill is available in your environment, use it; otherwise execute the tasks sequentially in order.
 
-**Goal:** Build a reusable development harness for all future Angular web projects: shared, versioned tooling presets (TypeScript, ESLint, Prettier, testing), a layered guidelines system where every consuming project can add project-specific rules on top of harness-wide core rules, an `ng add` schematic that wires a project up in one command, and reusable CI workflows.
+**Goal:** Build a state-of-the-art, reusable development harness for all future Angular web projects: shared versioned tooling presets (TypeScript, ESLint, Prettier, testing), **enforced** architecture boundaries (Sheriff), a layered guidelines system with per-project overrides, an agentic-development layer (CLAUDE.md + project verify skill), a `harness doctor` compliance CLI, automated dependency management (shared Renovate preset), git hygiene (lefthook + commitlint), one-command onboarding via `ng add` with an `ng update` migration path, and hardened reusable CI.
 
-**Architecture:** A pnpm monorepo (`angular-harness`) that publishes small, focused npm packages under the `@treinberger` scope to GitHub Packages. Consuming projects install the packages and run `ng add @treinberger/harness-schematics`, which scaffolds config files, a `harness.config.json`, a layered guidelines directory, a `CLAUDE.md` for agentic work, and a CI workflow that calls this repo's reusable GitHub Actions workflow. Guidelines follow a two-layer model: **core** guidelines live in this repo and are referenced by version; **project** guidelines live in each consuming repo and override core on conflict.
+**Architecture:** A pnpm monorepo (`angular-harness`) publishing focused npm packages under the `@treinberger` scope to GitHub Packages. Consuming projects run `ng add @treinberger/harness-schematics`, which scaffolds configs, `harness.config.json`, layered guidelines, agent files, hooks, Renovate config, and CI. Guidelines follow a two-layer model: **core** guidelines live here (version-pinned); **project** guidelines live in each consuming repo and win on conflict. Where a guideline can be enforced by a machine, it is: ESLint + Sheriff enforce style and boundaries, `harness doctor` detects config drift, CI blocks on all of it. Prose guidelines are the fallback, not the mechanism.
 
-**Tech Stack:** Angular ≥ 21 (standalone, signals, zoneless), TypeScript strict, Node 22 LTS, pnpm, ESLint 9 flat config via `angular-eslint` + `typescript-eslint`, Prettier 3, Vitest (unit, via `@angular/build:unit-test`), Playwright (e2e), Angular Schematics, GitHub Actions reusable workflows, Changesets for versioning/publishing.
+**Tech Stack:** Angular ≥ 21 (standalone, signals, zoneless), TypeScript strict, Node 22 LTS, pnpm, ESLint 9 flat config (`angular-eslint` + `typescript-eslint`), Sheriff (`@softarc/sheriff-core`) for module boundaries, Prettier 3, Vitest (unit, via `@angular/build:unit-test`), Angular Testing Library, Playwright + `@axe-core/playwright` (e2e + a11y), lefthook + commitlint, Renovate, Angular Schematics, GitHub Actions reusable workflows, Changesets.
 
 ## Global Constraints
 
 - Node `>=22.12`, pnpm `>=9`. Use `pnpm` for everything; never `npm install` inside the monorepo.
-- All published packages are scoped `@treinberger/*` and published to GitHub Packages (`npm.pkg.github.com`).
-- Package names: `@treinberger/harness-tsconfig`, `@treinberger/harness-prettier-config`, `@treinberger/harness-eslint-config`, `@treinberger/harness-testing`, `@treinberger/harness-schematics`.
+- All published packages are scoped `@treinberger/*`, published to GitHub Packages (`npm.pkg.github.com`).
+- Package names: `@treinberger/harness-tsconfig`, `@treinberger/harness-prettier-config`, `@treinberger/harness-eslint-config`, `@treinberger/harness-testing`, `@treinberger/harness-cli`, `@treinberger/harness-schematics`.
 - All code, docs, comments, and commit messages in **English**.
 - Commit style: Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`).
 - TypeScript `strict: true` everywhere, including the harness's own source.
 - ESM-first: config packages ship `.mjs`/JSON; the schematics package ships CJS (required by `@angular-devkit/schematics`).
 - Do not pin exact dependency versions in this plan; install with `pnpm add` (latest) and let the lockfile pin. Peer ranges use the major that `pnpm add` resolves at implementation time.
 - Every task ends with green verification (`pnpm test` / documented manual check) before committing.
-- Angular-facing opinions baked into presets: standalone components only, `ChangeDetectionStrategy.OnPush` enforced, signals-first, native control flow (`@if`/`@for`), zoneless change detection in tests.
+- Angular-facing opinions baked into presets: standalone components only, `ChangeDetectionStrategy.OnPush` enforced, signals-first, native control flow (`@if`/`@for`), zoneless change detection, feature isolation enforced by Sheriff.
+- **Enforcement-first principle:** whenever a guideline can be checked by a tool, the tool check is the source of truth; the markdown guideline explains the *why*.
 
 ---
 
@@ -30,6 +31,9 @@ angular-harness/
 ├── package.json                  # private root, pnpm workspace
 ├── pnpm-workspace.yaml
 ├── vitest.config.mts             # runs all package tests
+├── renovate.json                 # this repo's own renovate config
+├── renovate/
+│   └── default.json              # SHARED Renovate preset for consumers
 ├── .github/workflows/
 │   ├── ci.yml                    # CI for this repo itself
 │   ├── release.yml               # changesets publish to GitHub Packages
@@ -39,13 +43,16 @@ angular-harness/
 │   ├── prettier-config/          # @treinberger/harness-prettier-config
 │   ├── eslint-config/            # @treinberger/harness-eslint-config
 │   ├── testing/                  # @treinberger/harness-testing
+│   ├── cli/                      # @treinberger/harness-cli  (harness doctor)
 │   └── schematics/               # @treinberger/harness-schematics
 ├── guidelines/                   # LAYER 0: core guidelines (versioned here)
 │   ├── 00-layering.md
 │   ├── 01-architecture.md
 │   ├── 02-angular-style.md
 │   ├── 03-testing.md
-│   └── 04-git-workflow.md
+│   ├── 04-git-workflow.md
+│   ├── 05-dependencies.md
+│   └── 06-agentic-development.md
 ├── schemas/
 │   └── harness.config.schema.json
 ├── docs/
@@ -53,6 +60,23 @@ angular-harness/
 │   └── consuming-a-project.md    # how a project adopts the harness
 └── examples/
     └── demo-app/                 # consuming Angular app, integration proof
+```
+
+## What a consuming project ends up with
+
+```
+my-app/
+├── harness.config.json           # machine-readable harness contract
+├── eslint.config.mjs             # extends harness factory, project overrides inline
+├── sheriff.config.ts             # module boundary rules (core/shared/features)
+├── lefthook.yml                  # pre-commit lint, commit-msg commitlint
+├── commitlint.config.mjs
+├── renovate.json                 # extends shared preset
+├── playwright.config.ts          # harness factory
+├── CLAUDE.md                     # agent contract: layered guideline reading order
+├── .claude/skills/verify-project/SKILL.md
+├── docs/guidelines/              # LAYER 1: project-specific rules (win on conflict)
+└── .github/workflows/ci.yml      # calls reusable harness workflow
 ```
 
 ---
@@ -134,6 +158,7 @@ export default defineConfig({
   test: {
     include: ["packages/*/test/**/*.test.ts", "packages/*/test/**/*.test.mts"],
     watch: false,
+    passWithNoTests: true,
   },
 });
 ```
@@ -152,6 +177,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -167,10 +196,12 @@ jobs:
       - run: pnpm test
 ```
 
+(Task 11 extends this job with package builds and the example-app verification.)
+
 - [ ] **Step 9: Verify**
 
 Run: `pnpm lint && pnpm test`
-Expected: prettier passes; vitest reports "no test files found" — acceptable only for this task; every later task adds tests. If vitest exits non-zero on empty suite, add `"passWithNoTests": true` to the `test` block in `vitest.config.mts`.
+Expected: prettier passes; vitest passes with no test files (allowed only in this task; every later task adds tests).
 
 - [ ] **Step 10: Commit**
 
@@ -431,21 +462,16 @@ git commit -m "feat: add @treinberger/harness-prettier-config"
 
 ---
 
-### Task 4: `@treinberger/harness-eslint-config`
+### Task 4: `@treinberger/harness-eslint-config` (with Sheriff boundaries)
 
 **Files:**
 - Create: `packages/eslint-config/package.json`, `packages/eslint-config/index.mjs`, `packages/eslint-config/README.md`
 - Test: `packages/eslint-config/test/lint.test.ts`, `packages/eslint-config/test/fixture/bad.component.ts`, `packages/eslint-config/test/fixture/tsconfig.json`
 
 **Interfaces:**
-- Produces: `defineHarnessEslintConfig(options: { prefix?: string; extraTs?: object[]; extraTemplate?: object[] }): FlatConfig[]` — default export is `defineHarnessEslintConfig()` with prefix `app`.
+- Produces: `defineHarnessEslintConfig(options: { prefix?: string; boundaries?: boolean; extraTs?: object[]; extraTemplate?: object[] }): FlatConfig[]` — default export is `defineHarnessEslintConfig()` with prefix `app` and `boundaries: false` (the scaffolded consumer config passes `boundaries: true` because the schematic also scaffolds `sheriff.config.ts`).
 
 - [ ] **Step 1: Install dependencies for the package**
-
-Run:
-```bash
-pnpm add -D --filter @treinberger/harness-eslint-config eslint @eslint/js typescript-eslint angular-eslint eslint-config-prettier typescript
-```
 
 First create a minimal `packages/eslint-config/package.json` so the filter resolves:
 
@@ -475,7 +501,12 @@ First create a minimal `packages/eslint-config/package.json` so the filter resol
 }
 ```
 
-After `pnpm add` resolves versions, move `@eslint/js`, `typescript-eslint`, `angular-eslint`, and `eslint-config-prettier` from `devDependencies` to `dependencies` in this package.json (they are runtime deps of the shared config; `eslint` and `typescript` stay peers).
+Run:
+```bash
+pnpm add -D --filter @treinberger/harness-eslint-config eslint @eslint/js typescript-eslint angular-eslint eslint-config-prettier @softarc/eslint-plugin-sheriff typescript
+```
+
+After `pnpm add` resolves versions, move `@eslint/js`, `typescript-eslint`, `angular-eslint`, `eslint-config-prettier`, and `@softarc/eslint-plugin-sheriff` from `devDependencies` to `dependencies` in this package.json (they are runtime deps of the shared config; `eslint` and `typescript` stay peers).
 
 - [ ] **Step 2: Write the failing test**
 
@@ -520,29 +551,36 @@ import { defineHarnessEslintConfig } from "../index.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(here, "fixture");
 
+async function lintFixture(): Promise<string[]> {
+  const eslint = new ESLint({
+    cwd: fixtureDir,
+    overrideConfigFile: true,
+    overrideConfig: defineHarnessEslintConfig({ prefix: "app" }),
+  });
+  const results = await eslint.lintFiles([join(fixtureDir, "bad.component.ts")]);
+  return results.flatMap((r) => r.messages.map((m) => m.ruleId ?? ""));
+}
+
 describe("harness-eslint-config", () => {
   it("flags a component selector with the wrong prefix", async () => {
-    const eslint = new ESLint({
-      cwd: fixtureDir,
-      overrideConfigFile: true,
-      overrideConfig: defineHarnessEslintConfig({ prefix: "app" }),
-    });
-    const results = await eslint.lintFiles([join(fixtureDir, "bad.component.ts")]);
-    const ruleIds = results.flatMap((r) => r.messages.map((m) => m.ruleId));
-    expect(ruleIds).toContain("@angular-eslint/component-selector");
+    expect(await lintFixture()).toContain("@angular-eslint/component-selector");
   });
 
   it("flags a component without OnPush change detection", async () => {
-    const eslint = new ESLint({
-      cwd: fixtureDir,
-      overrideConfigFile: true,
-      overrideConfig: defineHarnessEslintConfig({ prefix: "app" }),
-    });
-    const results = await eslint.lintFiles([join(fixtureDir, "bad.component.ts")]);
-    const ruleIds = results.flatMap((r) => r.messages.map((m) => m.ruleId));
-    expect(ruleIds).toContain(
+    expect(await lintFixture()).toContain(
       "@angular-eslint/prefer-on-push-component-change-detection",
     );
+  });
+
+  it("includes a sheriff config block only when boundaries are enabled", () => {
+    const withBoundaries = defineHarnessEslintConfig({ boundaries: true });
+    const withoutBoundaries = defineHarnessEslintConfig({ boundaries: false });
+    const hasSheriffRule = (configs: object[]) =>
+      configs.some((c) =>
+        JSON.stringify(Object.keys((c as { rules?: object }).rules ?? {})).includes("sheriff"),
+      );
+    expect(hasSheriffRule(withBoundaries)).toBe(true);
+    expect(hasSheriffRule(withoutBoundaries)).toBe(false);
   });
 });
 ```
@@ -559,18 +597,23 @@ import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import angular from 'angular-eslint';
 import prettier from 'eslint-config-prettier';
+import sheriff from '@softarc/eslint-plugin-sheriff';
 
 /**
  * Build the harness ESLint flat config.
  *
  * @param {object} [options]
  * @param {string} [options.prefix='app'] Angular selector prefix for this project.
+ * @param {boolean} [options.boundaries=false] Enable Sheriff module-boundary
+ *   enforcement. Requires a `sheriff.config.ts` in the project root
+ *   (scaffolded by @treinberger/harness-schematics).
  * @param {object[]} [options.extraTs=[]] Additional flat-config objects appended for *.ts files.
  * @param {object[]} [options.extraTemplate=[]] Additional flat-config objects appended for *.html files.
  * @returns {import('typescript-eslint').ConfigArray}
  */
 export function defineHarnessEslintConfig({
   prefix = 'app',
+  boundaries = false,
   extraTs = [],
   extraTemplate = [],
 } = {}) {
@@ -613,6 +656,14 @@ export function defineHarnessEslintConfig({
         ],
       },
     },
+    ...(boundaries
+      ? [
+          {
+            files: ['**/*.ts'],
+            extends: [sheriff.configs.all],
+          },
+        ]
+      : []),
     ...extraTs,
     {
       files: ['**/*.html'],
@@ -631,17 +682,22 @@ export function defineHarnessEslintConfig({
 export default defineHarnessEslintConfig();
 ```
 
+Version-drift notes (verify against installed majors, adjust test and config together if renamed):
+- `@angular-eslint/prefer-on-push-component-change-detection` — rule id.
+- `sheriff.configs.all` — the flat-config export of `@softarc/eslint-plugin-sheriff`; check the package README for the exact export name of the flat (ESLint 9) preset and use that.
+
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pnpm test`
-Expected: PASS. If `prefer-on-push-component-change-detection` reports nothing, verify the rule name against the installed `angular-eslint` major (rule names occasionally move); adjust the test and config together.
+Expected: PASS (3 tests).
 
 - [ ] **Step 6: Write `packages/eslint-config/README.md`**
 
 ```markdown
 # @treinberger/harness-eslint-config
 
-ESLint 9 flat config for Angular harness projects.
+ESLint 9 flat config for Angular harness projects, including Sheriff
+module-boundary enforcement.
 
 ## Usage
 
@@ -651,6 +707,7 @@ ESLint 9 flat config for Angular harness projects.
 
     export default defineHarnessEslintConfig({
       prefix: 'myapp',
+      boundaries: true, // requires sheriff.config.ts (scaffolded by ng add)
       extraTs: [
         // project-specific rule overrides go here and win over harness defaults
         { files: ['**/*.ts'], rules: { 'no-console': 'error' } },
@@ -662,7 +719,7 @@ ESLint 9 flat config for Angular harness projects.
 
 ```bash
 git add packages/eslint-config pnpm-lock.yaml
-git commit -m "feat: add @treinberger/harness-eslint-config flat config factory"
+git commit -m "feat: add @treinberger/harness-eslint-config with sheriff boundaries"
 ```
 
 ---
@@ -670,13 +727,15 @@ git commit -m "feat: add @treinberger/harness-eslint-config flat config factory"
 ### Task 5: `@treinberger/harness-testing`
 
 **Files:**
-- Create: `packages/testing/package.json`, `packages/testing/src/index.ts`, `packages/testing/src/playwright.ts`, `packages/testing/tsconfig.json`, `packages/testing/README.md`
-- Test: `packages/testing/test/playwright.test.ts`
+- Create: `packages/testing/package.json`, `packages/testing/src/index.ts`, `packages/testing/src/playwright.ts`, `packages/testing/src/playwright-a11y.ts`, `packages/testing/src/testing-library.ts`, `packages/testing/tsconfig.json`, `packages/testing/README.md`
+- Test: `packages/testing/test/playwright.test.ts`, `packages/testing/test/exports.test.ts`
 
 **Interfaces:**
 - Produces:
   - `defineHarnessPlaywrightConfig(options: { baseURL: string; webServerCommand: string; port: number } & Partial<PlaywrightTestConfig>): PlaywrightTestConfig`
-  - `harnessTestProviders(): (Provider | EnvironmentProviders)[]` — zoneless providers for `TestBed.configureTestingModule`.
+  - `harnessTestProviders(): (Provider | EnvironmentProviders)[]` — zoneless providers for TestBed.
+  - `renderWithHarness(component, options?)` — Angular Testing Library `render` with harness providers pre-applied (subpath `./testing-library`).
+  - `expectNoA11yViolations(page, options?)` — axe-core scan for Playwright tests (subpath `./playwright-a11y`).
 
 - [ ] **Step 1: Create package.json and install deps**
 
@@ -686,7 +745,7 @@ git commit -m "feat: add @treinberger/harness-eslint-config flat config factory"
 {
   "name": "@treinberger/harness-testing",
   "version": "0.1.0",
-  "description": "Shared Playwright config factory and Angular TestBed defaults",
+  "description": "Playwright config factory, axe a11y helper, Testing Library wrapper, zoneless TestBed defaults",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
@@ -694,18 +753,24 @@ git commit -m "feat: add @treinberger/harness-eslint-config flat config factory"
   "files": ["dist"],
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./playwright": { "types": "./dist/playwright.d.ts", "default": "./dist/playwright.js" }
+    "./playwright": { "types": "./dist/playwright.d.ts", "default": "./dist/playwright.js" },
+    "./playwright-a11y": { "types": "./dist/playwright-a11y.d.ts", "default": "./dist/playwright-a11y.js" },
+    "./testing-library": { "types": "./dist/testing-library.d.ts", "default": "./dist/testing-library.js" }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
     "@angular/core": ">=21",
-    "@playwright/test": ">=1.45"
+    "@playwright/test": ">=1.45",
+    "@axe-core/playwright": ">=4",
+    "@testing-library/angular": ">=17"
   },
   "peerDependenciesMeta": {
     "@angular/core": { "optional": true },
-    "@playwright/test": { "optional": true }
+    "@playwright/test": { "optional": true },
+    "@axe-core/playwright": { "optional": true },
+    "@testing-library/angular": { "optional": true }
   },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com",
@@ -721,8 +786,10 @@ git commit -m "feat: add @treinberger/harness-eslint-config flat config factory"
 
 Run:
 ```bash
-pnpm add -D --filter @treinberger/harness-testing typescript @playwright/test @angular/core
+pnpm add -D --filter @treinberger/harness-testing typescript @playwright/test @angular/core @axe-core/playwright @testing-library/angular
 ```
+
+(If `@testing-library/angular` pulls peer warnings for missing Angular packages, add `@angular/common @angular/compiler @angular/platform-browser` as dev deps of this package too — they are needed only for type-checking.)
 
 - [ ] **Step 2: Write `packages/testing/tsconfig.json`**
 
@@ -742,13 +809,13 @@ pnpm add -D --filter @treinberger/harness-testing typescript @playwright/test @a
 }
 ```
 
-- [ ] **Step 3: Write the failing test**
+- [ ] **Step 3: Write the failing tests**
 
-`packages/testing/test/playwright.test.ts`:
+`packages/testing/test/playwright.test.ts` (note: extensionless `../src/...` imports so vitest resolves the `.ts` sources directly):
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { defineHarnessPlaywrightConfig } from "../src/playwright.js";
+import { defineHarnessPlaywrightConfig } from "../src/playwright";
 
 describe("defineHarnessPlaywrightConfig", () => {
   it("wires baseURL and webServer from the required options", () => {
@@ -782,10 +849,33 @@ describe("defineHarnessPlaywrightConfig", () => {
 });
 ```
 
-- [ ] **Step 4: Run test to verify it fails**
+`packages/testing/test/exports.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+describe("harness-testing exports", () => {
+  it("exposes renderWithHarness", async () => {
+    const mod = await import("../src/testing-library");
+    expect(typeof mod.renderWithHarness).toBe("function");
+  });
+
+  it("exposes expectNoA11yViolations", async () => {
+    const mod = await import("../src/playwright-a11y");
+    expect(typeof mod.expectNoA11yViolations).toBe("function");
+  });
+
+  it("exposes zoneless test providers", async () => {
+    const mod = await import("../src/index");
+    expect(mod.harnessTestProviders().length).toBeGreaterThan(0);
+  });
+});
+```
+
+- [ ] **Step 4: Run tests to verify they fail**
 
 Run: `pnpm test`
-Expected: FAIL — cannot resolve `../src/playwright.js`.
+Expected: FAIL — cannot resolve `../src/playwright` etc.
 
 - [ ] **Step 5: Write `packages/testing/src/playwright.ts`**
 
@@ -827,7 +917,60 @@ export function defineHarnessPlaywrightConfig(
 }
 ```
 
-- [ ] **Step 6: Write `packages/testing/src/index.ts`**
+- [ ] **Step 6: Write `packages/testing/src/playwright-a11y.ts`**
+
+```ts
+import type { Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+export interface A11yOptions {
+  /** axe rule ids to skip, with a documented reason at the call site. */
+  disableRules?: string[];
+}
+
+/** Run an axe-core scan on the current page; throw with a readable summary on violations. */
+export async function expectNoA11yViolations(
+  page: Page,
+  options: A11yOptions = {},
+): Promise<void> {
+  let builder = new AxeBuilder({ page });
+  if (options.disableRules?.length) {
+    builder = builder.disableRules(options.disableRules);
+  }
+  const results = await builder.analyze();
+  if (results.violations.length > 0) {
+    const summary = results.violations
+      .map((v) => `${v.id} [${v.impact ?? "n/a"}]: ${v.help} (${v.nodes.length} nodes)`)
+      .join("\n");
+    throw new Error(`Accessibility violations:\n${summary}`);
+  }
+}
+```
+
+- [ ] **Step 7: Write `packages/testing/src/testing-library.ts`**
+
+```ts
+import type { Type } from "@angular/core";
+import {
+  render,
+  type RenderComponentOptions,
+  type RenderResult,
+} from "@testing-library/angular";
+import { harnessTestProviders } from "./index.js";
+
+/** Angular Testing Library render with harness defaults (zoneless) pre-applied. */
+export async function renderWithHarness<T>(
+  component: Type<T>,
+  options: RenderComponentOptions<T> = {},
+): Promise<RenderResult<T>> {
+  return render(component, {
+    ...options,
+    providers: [...harnessTestProviders(), ...(options.providers ?? [])],
+  });
+}
+```
+
+- [ ] **Step 8: Write `packages/testing/src/index.ts`**
 
 ```ts
 import type { EnvironmentProviders, Provider } from "@angular/core";
@@ -847,12 +990,12 @@ export function harnessTestProviders(): (Provider | EnvironmentProviders)[] {
 
 If the installed `@angular/core` exports the zoneless provider under a different name (it was `provideExperimentalZonelessChangeDetection` before stabilization), use the stable name the installed major exposes and note it in the README.
 
-- [ ] **Step 7: Run tests, then build**
+- [ ] **Step 9: Run tests, then build**
 
 Run: `pnpm test && pnpm --filter @treinberger/harness-testing build`
-Expected: tests PASS; `dist/` contains `index.js`, `index.d.ts`, `playwright.js`, `playwright.d.ts`.
+Expected: all tests PASS; `dist/` contains `index.*`, `playwright.*`, `playwright-a11y.*`, `testing-library.*`.
 
-- [ ] **Step 8: Write `packages/testing/README.md`**
+- [ ] **Step 10: Write `packages/testing/README.md`**
 
 ```markdown
 # @treinberger/harness-testing
@@ -869,20 +1012,35 @@ Expected: tests PASS; `dist/` contains `index.js`, `index.d.ts`, `playwright.js`
       port: 4200,
     });
 
+## Accessibility in e2e
+
+    import { expectNoA11yViolations } from '@treinberger/harness-testing/playwright-a11y';
+
+    test('home page is accessible', async ({ page }) => {
+      await page.goto('/');
+      await expectNoA11yViolations(page);
+    });
+
 ## Unit tests (Vitest via @angular/build:unit-test)
+
+    import { renderWithHarness } from '@treinberger/harness-testing/testing-library';
+
+    const { getByRole } = await renderWithHarness(MyComponent, {
+      inputs: { title: 'hello' },
+    });
+
+Or plain TestBed:
 
     import { harnessTestProviders } from '@treinberger/harness-testing';
 
-    TestBed.configureTestingModule({
-      providers: [...harnessTestProviders()],
-    });
+    TestBed.configureTestingModule({ providers: [...harnessTestProviders()] });
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add packages/testing pnpm-lock.yaml
-git commit -m "feat: add @treinberger/harness-testing with playwright factory and zoneless test providers"
+git commit -m "feat: add @treinberger/harness-testing with playwright, a11y, and testing-library helpers"
 ```
 
 ---
@@ -890,11 +1048,10 @@ git commit -m "feat: add @treinberger/harness-testing with playwright factory an
 ### Task 6: Core guidelines (Layer 0) and config schema
 
 **Files:**
-- Create: `guidelines/00-layering.md`, `guidelines/01-architecture.md`, `guidelines/02-angular-style.md`, `guidelines/03-testing.md`, `guidelines/04-git-workflow.md`, `schemas/harness.config.schema.json`
-- Test: `packages/schematics/test/schema.test.ts` is added in Task 7 — here, validate the schema manually with `npx ajv` (Step 7).
+- Create: `guidelines/00-layering.md`, `guidelines/01-architecture.md`, `guidelines/02-angular-style.md`, `guidelines/03-testing.md`, `guidelines/04-git-workflow.md`, `guidelines/05-dependencies.md`, `guidelines/06-agentic-development.md`, `schemas/harness.config.schema.json`
 
 **Interfaces:**
-- Produces: the layering contract every consuming project follows, and the JSON schema that `harness.config.json` files validate against. The schematic (Task 7) copies/references these.
+- Produces: the layering contract every consuming project follows, and the JSON schema that `harness.config.json` validates against. The schematic (Task 8) and `harness doctor` (Task 7) consume the schema's shape.
 
 - [ ] **Step 1: Write `guidelines/00-layering.md`**
 
@@ -917,9 +1074,10 @@ apply them in this order:
    rationale ("**Overrides core:** <rule> — because <reason>").
 3. Silent divergence is a defect: if project practice contradicts core and
    no override is documented, fix the practice or document the override.
-4. Tooling presets (tsconfig/eslint/prettier/testing packages) are the
-   executable form of core guidelines. Projects override them via the
-   documented extension points (`extraTs`, prettier spread, tsconfig
+4. Enforcement-first: where a rule is enforced by tooling (ESLint, Sheriff,
+   `harness doctor`, CI), the tool is the source of truth. Overriding an
+   enforced rule means overriding it at the documented extension point
+   (`extraTs`, `sheriff.config.ts` depRules, prettier spread, tsconfig
    overrides) — never by disabling the shared config wholesale.
 5. Coding agents (Claude/CLAUDE.md): read core guidelines first, then all
    files in `docs/guidelines/`; on conflict, the project file wins.
@@ -935,14 +1093,16 @@ apply them in this order:
   services, and routes of one feature. Shared, feature-agnostic code lives in
   `src/app/shared/` (presentational) and `src/app/core/` (singletons:
   interceptors, auth, config).
+- **Boundaries are enforced by Sheriff** (`sheriff.config.ts`):
+  features must not import from other features; `shared` imports nothing
+  app-internal; `core` may use `shared`. Changing the dependency rules is a
+  project-level architecture decision — document it in `docs/guidelines/`.
 - Routing: lazy-load every feature via `loadChildren`/`loadComponent`.
 - State: component-local state with signals; cross-component state in
   injectable signal stores (plain services exposing `signal`/`computed`).
   Introduce a state library only via a documented project override.
 - HTTP: all API access behind typed service classes in the owning feature
   (or `core/api/` when shared). Components never call `HttpClient` directly.
-- Dependency direction: `features → shared/core`. Features must not import
-  from other features; extract into `shared`/`core` instead.
 ```
 
 - [ ] **Step 3: Write `guidelines/02-angular-style.md`**
@@ -973,12 +1133,13 @@ apply them in this order:
 
 - Unit tests: Vitest via `@angular/build:unit-test`. Co-located
   `*.spec.ts` next to the code under test.
-- TestBed setup uses `harnessTestProviders()` from
-  `@treinberger/harness-testing` (zoneless).
-- Test behavior through the public API/DOM, not implementation details.
-  Prefer `fixture.nativeElement` queries and dispatching real events.
+- Component tests use Angular Testing Library via `renderWithHarness()`
+  from `@treinberger/harness-testing/testing-library` — query by role/label,
+  interact through the DOM, assert observable behavior. Plain TestBed with
+  `harnessTestProviders()` for services and non-DOM logic.
 - E2E: Playwright with `defineHarnessPlaywrightConfig`. Smoke-test every
-  route; deeper flows for business-critical paths.
+  route; deeper flows for business-critical paths. Every smoke test calls
+  `expectNoA11yViolations(page)` — accessibility regressions fail CI.
 - TDD is the default working mode: red → green → refactor. A bugfix starts
   with a failing test reproducing the bug.
 - Coverage is a signal, not a gate; do not chase numbers with trivial tests.
@@ -990,7 +1151,9 @@ apply them in this order:
 # Git Workflow
 
 - Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`, `test:`,
-  `refactor:`). Scope optional: `feat(auth): ...`.
+  `refactor:`) — enforced locally by commitlint via lefthook.
+- Pre-commit hook runs prettier + eslint on staged files (lefthook).
+  Bypass (`LEFTHOOK=0`) only for WIP commits on private branches.
 - Small, frequent commits; each commit leaves the build green.
 - Branch names: `feat/<slug>`, `fix/<slug>`, `chore/<slug>`.
 - `main` is protected; changes land via PR with green CI.
@@ -998,7 +1161,50 @@ apply them in this order:
   `treinberger/angular-harness/.github/workflows/angular-ci.yml`.
 ```
 
-- [ ] **Step 6: Write `schemas/harness.config.schema.json`**
+- [ ] **Step 6: Write `guidelines/05-dependencies.md`**
+
+```markdown
+# Dependencies
+
+- Renovate manages updates. Every project's `renovate.json` extends the
+  shared preset `github>treinberger/angular-harness//renovate/default.json`.
+- Non-major updates arrive grouped weekly; majors get individual PRs and are
+  reviewed by a human. Angular majors are upgraded deliberately (with
+  `ng update`), never auto-merged.
+- Harness packages (`@treinberger/harness-*`) are grouped into one PR;
+  after merging, update `harnessVersion` in `harness.config.json` and read
+  the harness changelog for guideline changes.
+- The lockfile is committed. CI installs with `--frozen-lockfile`.
+- `pnpm audit --prod --audit-level=high` runs in CI and blocks on findings;
+  temporary exceptions require a documented override in `docs/guidelines/`.
+- Adding a runtime dependency is an architecture decision: prefer platform
+  and Angular built-ins; justify new dependencies in the PR description.
+```
+
+- [ ] **Step 7: Write `guidelines/06-agentic-development.md`**
+
+```markdown
+# Agentic Development
+
+Rules for coding agents (Claude Code and similar) working in harness projects.
+
+- Entry point is the project's `CLAUDE.md`. It pins the guideline reading
+  order: core guidelines (Layer 0) first, then `docs/guidelines/` (Layer 1);
+  project wins on conflict.
+- Before claiming any task complete, run the project verify skill
+  (`.claude/skills/verify-project/`): lint, unit tests, build, doctor —
+  and e2e when the change touches routing, templates, or user flows.
+- Agents follow TDD like humans: failing test first, then implementation.
+- Agents never weaken enforcement to get green: no disabling ESLint rules
+  inline without a comment explaining why, no editing `sheriff.config.ts`
+  dep rules, no loosening tsconfig — such changes require an explicit
+  human decision recorded in `docs/guidelines/`.
+- Agents keep commits conventional and small; hooks (lefthook) stay enabled.
+- When an agent detects a conflict between layers or between a guideline
+  and tooling, it surfaces the conflict instead of silently picking a side.
+```
+
+- [ ] **Step 8: Write `schemas/harness.config.schema.json`**
 
 ```json
 {
@@ -1024,28 +1230,34 @@ apply them in this order:
       "default": "docs/guidelines",
       "description": "Directory holding Layer-1 project guidelines."
     },
+    "boundaries": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether Sheriff module-boundary enforcement is enabled."
+    },
     "ci": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "nodeVersion": { "type": "string", "default": "22" },
-        "e2e": { "type": "boolean", "default": true }
+        "e2e": { "type": "boolean", "default": true },
+        "audit": { "type": "boolean", "default": true }
       }
     }
   }
 }
 ```
 
-- [ ] **Step 7: Validate the schema**
+- [ ] **Step 9: Validate the schema**
 
 Run:
 ```bash
-echo '{"harnessVersion":"v0.1.0","prefix":"demo"}' > /tmp/hc.json
+echo '{"harnessVersion":"v0.1.0","prefix":"demo","boundaries":true}' > /tmp/hc.json
 npx --yes ajv-cli validate -s schemas/harness.config.schema.json -d /tmp/hc.json
 ```
 Expected: `/tmp/hc.json valid`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add guidelines schemas
@@ -1054,17 +1266,364 @@ git commit -m "docs: add layered core guidelines and harness.config schema"
 
 ---
 
-### Task 7: `@treinberger/harness-schematics` (`ng add`)
+### Task 7: `@treinberger/harness-cli` (`harness doctor`)
 
 **Files:**
-- Create: `packages/schematics/package.json`, `packages/schematics/tsconfig.json`, `packages/schematics/collection.json`, `packages/schematics/src/ng-add/index.ts`, `packages/schematics/src/ng-add/schema.json`, `packages/schematics/src/ng-add/files/…` (template tree, listed in Step 4), `packages/schematics/README.md`
+- Create: `packages/cli/package.json`, `packages/cli/tsconfig.json`, `packages/cli/src/doctor.ts`, `packages/cli/bin/harness.mjs`, `packages/cli/README.md`
+- Test: `packages/cli/test/doctor.test.ts`
+
+**Interfaces:**
+- Consumes: the file layout scaffolded by Task 8 and the `harness.config.json` shape from Task 6.
+- Produces: `runDoctor(root: string): DoctorFinding[]` and a `harness` bin with a `doctor` command — exit 0 when compliant, exit 1 with a finding list when not. Consuming projects get a `doctor` npm script; CI (Task 10) runs it.
+
+- [ ] **Step 1: Create package.json and tsconfig**
+
+`packages/cli/package.json`:
+
+```json
+{
+  "name": "@treinberger/harness-cli",
+  "version": "0.1.0",
+  "description": "Compliance doctor for harness projects: detects config drift",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/doctor.js",
+  "types": "dist/doctor.d.ts",
+  "bin": { "harness": "./bin/harness.mjs" },
+  "files": ["dist", "bin"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/treinberger/angular-harness.git",
+    "directory": "packages/cli"
+  }
+}
+```
+
+`packages/cli/tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+```
+
+Run: `pnpm add -D --filter @treinberger/harness-cli typescript`
+
+- [ ] **Step 2: Write the failing test**
+
+`packages/cli/test/doctor.test.ts`:
+
+```ts
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runDoctor } from "../src/doctor";
+
+let root: string;
+
+function write(path: string, content: string): void {
+  const full = join(root, path);
+  mkdirSync(join(full, ".."), { recursive: true });
+  writeFileSync(full, content);
+}
+
+/** Lay down a fully compliant project skeleton. */
+function compliantProject(): void {
+  write(
+    "harness.config.json",
+    JSON.stringify({ harnessVersion: "v0.1.0", prefix: "demo", boundaries: true }),
+  );
+  write("eslint.config.mjs", "export default [];");
+  write("sheriff.config.ts", "export const config = {};");
+  write("CLAUDE.md", "# CLAUDE.md");
+  write("lefthook.yml", "pre-commit:");
+  write("commitlint.config.mjs", "export default {};");
+  write("renovate.json", "{}");
+  write("playwright.config.ts", "export default {};");
+  write("docs/guidelines/README.md", "# Project Guidelines");
+  write(".github/workflows/ci.yml", "name: CI");
+  write("tsconfig.json", JSON.stringify({ extends: "@treinberger/harness-tsconfig/base.json" }));
+  write(
+    "package.json",
+    JSON.stringify({
+      name: "demo",
+      prettier: "@treinberger/harness-prettier-config",
+      scripts: { doctor: "harness doctor" },
+      devDependencies: {
+        "@treinberger/harness-tsconfig": "^0.1.0",
+        "@treinberger/harness-prettier-config": "^0.1.0",
+        "@treinberger/harness-eslint-config": "^0.1.0",
+        "@treinberger/harness-testing": "^0.1.0",
+        "@treinberger/harness-cli": "^0.1.0",
+      },
+    }),
+  );
+}
+
+describe("runDoctor", () => {
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "doctor-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("passes on a compliant project", () => {
+    compliantProject();
+    const findings = runDoctor(root);
+    expect(findings.every((f) => f.ok)).toBe(true);
+  });
+
+  it("fails when harness.config.json is missing", () => {
+    compliantProject();
+    rmSync(join(root, "harness.config.json"));
+    const failed = runDoctor(root).filter((f) => !f.ok);
+    expect(failed.map((f) => f.check)).toContain("harness.config.json exists and is valid");
+  });
+
+  it("fails when tsconfig does not extend the harness base", () => {
+    compliantProject();
+    write("tsconfig.json", JSON.stringify({ compilerOptions: {} }));
+    const failed = runDoctor(root).filter((f) => !f.ok);
+    expect(failed.map((f) => f.check)).toContain("tsconfig extends harness base");
+  });
+
+  it("fails on version drift between harness packages", () => {
+    compliantProject();
+    const pkgPath = join(root, "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+    pkg.devDependencies["@treinberger/harness-testing"] = "^0.2.0";
+    writeFileSync(pkgPath, JSON.stringify(pkg));
+    const failed = runDoctor(root).filter((f) => !f.ok);
+    expect(failed.map((f) => f.check)).toContain("harness package versions aligned");
+  });
+
+  it("does not require playwright config when e2e is disabled", () => {
+    compliantProject();
+    write(
+      "harness.config.json",
+      JSON.stringify({
+        harnessVersion: "v0.1.0",
+        prefix: "demo",
+        boundaries: true,
+        ci: { e2e: false },
+      }),
+    );
+    rmSync(join(root, "playwright.config.ts"));
+    expect(runDoctor(root).every((f) => f.ok)).toBe(true);
+  });
+
+  it("does not require sheriff config when boundaries are disabled", () => {
+    compliantProject();
+    write(
+      "harness.config.json",
+      JSON.stringify({ harnessVersion: "v0.1.0", prefix: "demo", boundaries: false }),
+    );
+    rmSync(join(root, "sheriff.config.ts"));
+    expect(runDoctor(root).every((f) => f.ok)).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `pnpm test`
+Expected: FAIL — cannot resolve `../src/doctor`.
+
+- [ ] **Step 4: Write `packages/cli/src/doctor.ts`**
+
+```ts
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+export interface DoctorFinding {
+  check: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface HarnessConfig {
+  harnessVersion?: string;
+  prefix?: string;
+  boundaries?: boolean;
+  ci?: { e2e?: boolean; audit?: boolean; nodeVersion?: string };
+}
+
+const ALWAYS_REQUIRED_FILES = [
+  "eslint.config.mjs",
+  "CLAUDE.md",
+  "lefthook.yml",
+  "commitlint.config.mjs",
+  "renovate.json",
+  "docs/guidelines/README.md",
+  ".github/workflows/ci.yml",
+];
+
+const HARNESS_PACKAGES = [
+  "@treinberger/harness-tsconfig",
+  "@treinberger/harness-prettier-config",
+  "@treinberger/harness-eslint-config",
+  "@treinberger/harness-testing",
+  "@treinberger/harness-cli",
+];
+
+function readJson(root: string, file: string): unknown | undefined {
+  const path = join(root, file);
+  if (!existsSync(path)) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+export function runDoctor(root: string): DoctorFinding[] {
+  const findings: DoctorFinding[] = [];
+  const add = (check: string, ok: boolean, detail = ""): void => {
+    findings.push({ check, ok, detail });
+  };
+
+  // 1. harness.config.json exists, parses, has required fields
+  const config = readJson(root, "harness.config.json") as HarnessConfig | undefined;
+  const configOk =
+    !!config &&
+    typeof config.harnessVersion === "string" &&
+    typeof config.prefix === "string" &&
+    /^[a-z][a-z0-9]*$/.test(config.prefix);
+  add(
+    "harness.config.json exists and is valid",
+    configOk,
+    configOk ? "" : "missing, unparseable, or missing harnessVersion/prefix",
+  );
+
+  // 2. required files
+  const required = [...ALWAYS_REQUIRED_FILES];
+  if (config?.boundaries !== false) required.push("sheriff.config.ts");
+  if (config?.ci?.e2e !== false) required.push("playwright.config.ts");
+  for (const file of required) {
+    add(`required file: ${file}`, existsSync(join(root, file)), "missing");
+  }
+
+  // 3. tsconfig extends harness base
+  const tsconfig = readJson(root, "tsconfig.json") as { extends?: string } | undefined;
+  add(
+    "tsconfig extends harness base",
+    tsconfig?.extends === "@treinberger/harness-tsconfig/base.json",
+    `found extends: ${String(tsconfig?.extends)}`,
+  );
+
+  // 4. package.json wiring
+  const pkg = readJson(root, "package.json") as
+    | { prettier?: string; devDependencies?: Record<string, string>; scripts?: Record<string, string> }
+    | undefined;
+  add(
+    "prettier config registered",
+    pkg?.prettier === "@treinberger/harness-prettier-config" ||
+      existsSync(join(root, ".prettierrc.mjs")),
+    "package.json prettier key not set and no .prettierrc.mjs override",
+  );
+  add(
+    "doctor script present",
+    pkg?.scripts?.["doctor"] === "harness doctor",
+    "add \"doctor\": \"harness doctor\" to scripts",
+  );
+
+  // 5. harness package versions aligned
+  const deps = pkg?.devDependencies ?? {};
+  const versions = new Set(
+    HARNESS_PACKAGES.filter((name) => deps[name] !== undefined).map((name) => deps[name]),
+  );
+  add(
+    "harness package versions aligned",
+    versions.size <= 1,
+    `found versions: ${[...versions].join(", ")}`,
+  );
+
+  return findings;
+}
+```
+
+- [ ] **Step 5: Write `packages/cli/bin/harness.mjs`**
+
+```js
+#!/usr/bin/env node
+import { runDoctor } from "../dist/doctor.js";
+
+const [, , command] = process.argv;
+
+if (command !== "doctor") {
+  console.error("Usage: harness doctor");
+  process.exit(2);
+}
+
+const findings = runDoctor(process.cwd());
+for (const f of findings) {
+  console.log(`${f.ok ? "✔" : "✘"} ${f.check}${f.ok || !f.detail ? "" : ` — ${f.detail}`}`);
+}
+const failed = findings.filter((f) => !f.ok).length;
+if (failed > 0) {
+  console.error(`\nharness doctor: ${failed} check(s) failed.`);
+  process.exit(1);
+}
+console.log("\nharness doctor: all checks passed.");
+```
+
+- [ ] **Step 6: Run tests, then build**
+
+Run: `pnpm test && pnpm --filter @treinberger/harness-cli build`
+Expected: all doctor tests PASS; `dist/doctor.js` exists.
+
+- [ ] **Step 7: Write `packages/cli/README.md`**
+
+```markdown
+# @treinberger/harness-cli
+
+    pnpm exec harness doctor
+
+Checks a harness project for config drift: required files, tsconfig/prettier
+wiring, aligned harness package versions, conditional checks driven by
+`harness.config.json` (`boundaries`, `ci.e2e`). Exit 1 on any failed check —
+CI runs this on every push.
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add packages/cli pnpm-lock.yaml
+git commit -m "feat: add harness doctor CLI detecting config drift"
+```
+
+---
+
+### Task 8: `@treinberger/harness-schematics` (`ng add` + migration path)
+
+**Files:**
+- Create: `packages/schematics/package.json`, `packages/schematics/tsconfig.json`, `packages/schematics/collection.json`, `packages/schematics/migrations.json`, `packages/schematics/copy-assets.mjs`, `packages/schematics/src/ng-add/index.ts`, `packages/schematics/src/ng-add/schema.json`, `packages/schematics/src/ng-add/files/…` (template tree, Step 4), `packages/schematics/README.md`
 - Test: `packages/schematics/test/ng-add.test.ts`
 
 **Interfaces:**
-- Consumes: package names from Tasks 2–5; schema from Task 6; reusable workflow name from Task 8 (`angular-ci.yml` — fixed here, implemented there).
-- Produces: `ng add @treinberger/harness-schematics --prefix=<prefix>` which scaffolds all harness files into a consuming project.
+- Consumes: package names from Tasks 2–7; schema from Task 6; reusable workflow name from Task 10 (`angular-ci.yml` — fixed here, implemented there).
+- Produces: `ng add @treinberger/harness-schematics --prefix=<prefix>` scaffolding the full consumer layout, plus an (initially empty) `ng update` migrations collection.
 
-- [ ] **Step 1: Create package.json, tsconfig, and install deps**
+- [ ] **Step 1: Create package.json, tsconfig, copy script; install deps**
 
 `packages/schematics/package.json`:
 
@@ -1075,7 +1634,10 @@ git commit -m "docs: add layered core guidelines and harness.config schema"
   "description": "ng add schematic that wires an Angular project into the harness",
   "license": "MIT",
   "schematics": "./collection.json",
-  "files": ["collection.json", "dist"],
+  "ng-update": {
+    "migrations": "./migrations.json"
+  },
+  "files": ["collection.json", "migrations.json", "dist"],
   "scripts": {
     "build": "tsc -p tsconfig.json && node copy-assets.mjs"
   },
@@ -1112,13 +1674,7 @@ git commit -m "docs: add layered core guidelines and harness.config schema"
 }
 ```
 
-Run:
-```bash
-pnpm add --filter @treinberger/harness-schematics @angular-devkit/schematics @angular-devkit/core @schematics/angular
-pnpm add -D --filter @treinberger/harness-schematics typescript
-```
-
-`packages/schematics/copy-assets.mjs` (copies non-TS template files into dist):
+`packages/schematics/copy-assets.mjs`:
 
 ```js
 import { cpSync } from "node:fs";
@@ -1126,7 +1682,15 @@ cpSync("src/ng-add/files", "dist/ng-add/files", { recursive: true });
 cpSync("src/ng-add/schema.json", "dist/ng-add/schema.json");
 ```
 
-- [ ] **Step 2: Write `collection.json`**
+Run:
+```bash
+pnpm add --filter @treinberger/harness-schematics @angular-devkit/schematics @angular-devkit/core @schematics/angular
+pnpm add -D --filter @treinberger/harness-schematics typescript
+```
+
+- [ ] **Step 2: Write `collection.json` and `migrations.json`**
+
+`packages/schematics/collection.json`:
 
 ```json
 {
@@ -1138,6 +1702,15 @@ cpSync("src/ng-add/schema.json", "dist/ng-add/schema.json");
       "schema": "./dist/ng-add/schema.json"
     }
   }
+}
+```
+
+`packages/schematics/migrations.json` (empty now; future harness majors add `ng update` migrations here, e.g. rewriting configs when an extension point changes):
+
+```json
+{
+  "$schema": "../../node_modules/@angular-devkit/schematics/collection-schema.json",
+  "schematics": {}
 }
 ```
 
@@ -1159,6 +1732,11 @@ cpSync("src/ng-add/schema.json", "dist/ng-add/schema.json");
       "type": "boolean",
       "description": "Scaffold Playwright e2e setup.",
       "default": true
+    },
+    "boundaries": {
+      "type": "boolean",
+      "description": "Scaffold Sheriff module-boundary enforcement.",
+      "default": true
     }
   },
   "required": []
@@ -1167,7 +1745,7 @@ cpSync("src/ng-add/schema.json", "dist/ng-add/schema.json");
 
 - [ ] **Step 4: Write the template file tree `src/ng-add/files/`**
 
-Files use the schematics template syntax (`<%= prefix %>`). Create:
+Files use schematics template syntax (`<%= prefix %>`). Every file carries a `.template` suffix in the source tree, stripped during rendering (Step 6), so the monorepo's own tooling never lints placeholders. Create:
 
 `src/ng-add/files/harness.config.json.template`:
 
@@ -1175,7 +1753,8 @@ Files use the schematics template syntax (`<%= prefix %>`). Create:
 {
   "$schema": "https://raw.githubusercontent.com/treinberger/angular-harness/main/schemas/harness.config.schema.json",
   "harnessVersion": "<%= harnessVersion %>",
-  "prefix": "<%= prefix %>"
+  "prefix": "<%= prefix %>",
+  "boundaries": <%= boundaries %>
 }
 ```
 
@@ -1186,10 +1765,66 @@ import { defineHarnessEslintConfig } from '@treinberger/harness-eslint-config';
 
 export default defineHarnessEslintConfig({
   prefix: '<%= prefix %>',
+  boundaries: <%= boundaries %>,
   // Project-specific rule overrides win over harness defaults:
   extraTs: [],
   extraTemplate: [],
 });
+```
+
+`src/ng-add/files/sheriff.config.ts.template` (only when `boundaries`):
+
+```ts
+import { SheriffConfig } from '@softarc/sheriff-core';
+
+export const config: SheriffConfig = {
+  enableBarrelLess: true,
+  modules: {
+    'src/app/core': ['core'],
+    'src/app/shared': ['shared'],
+    'src/app/features/<feature>': ['feature:<feature>'],
+  },
+  depRules: {
+    root: ['core', 'shared', 'feature:*'],
+    'feature:*': ['shared', 'core'],
+    core: ['shared'],
+    shared: [],
+  },
+};
+```
+
+(The `<feature>` placeholders here are Sheriff's own syntax, not schematic template variables — no `<%= %>`.)
+
+`src/ng-add/files/lefthook.yml.template`:
+
+```yaml
+pre-commit:
+  commands:
+    format:
+      glob: "*.{ts,html,css,scss,json,md,yml}"
+      run: pnpm exec prettier --check {staged_files}
+    lint:
+      glob: "*.{ts,html}"
+      run: pnpm exec eslint --no-warn-ignored {staged_files}
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
+```
+
+`src/ng-add/files/commitlint.config.mjs.template`:
+
+```js
+export default { extends: ['@commitlint/config-conventional'] };
+```
+
+`src/ng-add/files/renovate.json.template`:
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>treinberger/angular-harness//renovate/default.json"]
+}
 ```
 
 `src/ng-add/files/docs/guidelines/README.md.template`:
@@ -1221,7 +1856,8 @@ This project uses the treinberger Angular harness
 1. Core guidelines (Layer 0):
    https://github.com/treinberger/angular-harness/tree/<%= harnessVersion %>/guidelines
    Summary: standalone + signals + OnPush + zoneless, native control flow,
-   feature-first structure, TDD with Vitest, Playwright e2e,
+   feature-first structure with Sheriff-enforced boundaries, TDD with Vitest
+   + Testing Library, Playwright e2e with axe a11y checks,
    Conventional Commits.
 2. Project guidelines (Layer 1): `docs/guidelines/` in this repo.
    **On conflict, project guidelines win.**
@@ -1232,13 +1868,42 @@ This project uses the treinberger Angular harness
 - Unit tests: `pnpm test`
 - Lint: `pnpm lint`
 - E2E: `pnpm e2e`
+- Compliance: `pnpm doctor`
+
+## Definition of done
+
+Run the verify skill (`.claude/skills/verify-project/`) before claiming any
+task complete: lint + test + build + doctor, plus e2e for user-facing changes.
 
 ## Hard rules
 
 - Selector prefix: `<%= prefix %>` (see `harness.config.json`).
-- Never disable the shared ESLint/Prettier/tsconfig presets wholesale;
-  extend them via their documented extension points.
+- Never disable the shared ESLint/Prettier/tsconfig presets wholesale, never
+  edit `sheriff.config.ts` dep rules to silence a boundary error — extend via
+  the documented extension points; escalate real conflicts to a human.
 - Every bugfix starts with a failing test.
+```
+
+`src/ng-add/files/.claude/skills/verify-project/SKILL.md.template`:
+
+```markdown
+---
+name: verify-project
+description: Verify this project is green before claiming work complete - lint, unit tests, build, harness doctor, and e2e for user-facing changes
+---
+
+# Verify Project
+
+Run in this order; stop and fix on the first failure:
+
+1. `pnpm lint` — ESLint (incl. Sheriff boundaries) + Prettier
+2. `pnpm test` — unit tests (Vitest)
+3. `pnpm build` — production build (includes bundle budgets)
+4. `pnpm doctor` — harness compliance
+5. If the change touches routes, templates, or user flows: `pnpm e2e`
+
+Only report success after every applicable step passes. Quote the failing
+output verbatim when reporting a failure.
 ```
 
 `src/ng-add/files/.github/workflows/ci.yml.template`:
@@ -1258,7 +1923,7 @@ jobs:
       e2e: <%= e2e %>
 ```
 
-`src/ng-add/files/playwright.config.ts.template` (only written when `e2e` is true — handled in the factory):
+`src/ng-add/files/playwright.config.ts.template` (only when `e2e`):
 
 ```ts
 import { defineHarnessPlaywrightConfig } from '@treinberger/harness-testing/playwright';
@@ -1270,7 +1935,18 @@ export default defineHarnessPlaywrightConfig({
 });
 ```
 
-Note: name every template file with a `.template` suffix in the source tree and strip it during rendering (see the `rename` in Step 6). This prevents the monorepo's own tooling from linting template placeholders.
+`src/ng-add/files/e2e/smoke.spec.ts.template` (only when `e2e`):
+
+```ts
+import { test, expect } from '@playwright/test';
+import { expectNoA11yViolations } from '@treinberger/harness-testing/playwright-a11y';
+
+test('home page renders and is accessible', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('body')).toBeVisible();
+  await expectNoA11yViolations(page);
+});
+```
 
 - [ ] **Step 5: Write the failing schematic test**
 
@@ -1278,7 +1954,7 @@ Note: name every template file with a `.template` suffix in the source tree and 
 
 ```ts
 import { describe, expect, it, beforeEach } from "vitest";
-import { SchematicTestRunner, UnitTestTree } from "@angular-devkit/schematics/testing";
+import { SchematicTestRunner } from "@angular-devkit/schematics/testing";
 import { Tree } from "@angular-devkit/schematics";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1286,13 +1962,34 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const collectionPath = join(here, "..", "collection.json");
 
+const DEFAULT_OPTIONS = { prefix: "demo", e2e: true, boundaries: true };
+
 function baseAppTree(): Tree {
   const tree = Tree.empty();
   tree.create(
     "/package.json",
     JSON.stringify({ name: "demo", version: "0.0.0", scripts: {}, devDependencies: {} }),
   );
-  tree.create("/angular.json", JSON.stringify({ version: 1, projects: { demo: { root: "" } } }));
+  tree.create(
+    "/angular.json",
+    JSON.stringify({
+      version: 1,
+      projects: {
+        demo: {
+          root: "",
+          architect: {
+            build: {
+              configurations: {
+                production: {
+                  budgets: [{ type: "initial", maximumWarning: "500kB", maximumError: "1MB" }],
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+  );
   tree.create("/tsconfig.json", JSON.stringify({ compilerOptions: {} }));
   return tree;
 }
@@ -1305,53 +2002,91 @@ describe("ng-add", () => {
   });
 
   it("scaffolds all harness files", async () => {
-    const tree = await runner.runSchematic<{ prefix: string; e2e: boolean }>(
-      "ng-add",
-      { prefix: "demo", e2e: true },
-      baseAppTree(),
-    );
+    const tree = await runner.runSchematic("ng-add", DEFAULT_OPTIONS, baseAppTree());
     for (const file of [
       "/harness.config.json",
       "/eslint.config.mjs",
+      "/sheriff.config.ts",
+      "/lefthook.yml",
+      "/commitlint.config.mjs",
+      "/renovate.json",
       "/docs/guidelines/README.md",
       "/CLAUDE.md",
+      "/.claude/skills/verify-project/SKILL.md",
       "/.github/workflows/ci.yml",
       "/playwright.config.ts",
+      "/e2e/smoke.spec.ts",
     ]) {
       expect(tree.exists(file), `${file} should exist`).toBe(true);
     }
   });
 
   it("injects the prefix into rendered files", async () => {
-    const tree = await runner.runSchematic("ng-add", { prefix: "demo", e2e: true }, baseAppTree());
+    const tree = await runner.runSchematic("ng-add", DEFAULT_OPTIONS, baseAppTree());
     expect(tree.readText("/eslint.config.mjs")).toContain("prefix: 'demo'");
     expect(JSON.parse(tree.readText("/harness.config.json")).prefix).toBe("demo");
   });
 
   it("extends the harness tsconfig", async () => {
-    const tree = await runner.runSchematic("ng-add", { prefix: "demo", e2e: true }, baseAppTree());
+    const tree = await runner.runSchematic("ng-add", DEFAULT_OPTIONS, baseAppTree());
     const tsconfig = JSON.parse(tree.readText("/tsconfig.json"));
     expect(tsconfig.extends).toBe("@treinberger/harness-tsconfig/base.json");
   });
 
-  it("adds harness packages to devDependencies and sets the prettier key", async () => {
-    const tree = await runner.runSchematic("ng-add", { prefix: "demo", e2e: true }, baseAppTree());
+  it("wires package.json: deps, prettier key, scripts", async () => {
+    const tree = await runner.runSchematic("ng-add", DEFAULT_OPTIONS, baseAppTree());
     const pkg = JSON.parse(tree.readText("/package.json"));
-    expect(pkg.devDependencies["@treinberger/harness-eslint-config"]).toBeDefined();
-    expect(pkg.devDependencies["@treinberger/harness-tsconfig"]).toBeDefined();
-    expect(pkg.devDependencies["@treinberger/harness-testing"]).toBeDefined();
+    for (const dep of [
+      "@treinberger/harness-tsconfig",
+      "@treinberger/harness-prettier-config",
+      "@treinberger/harness-eslint-config",
+      "@treinberger/harness-testing",
+      "@treinberger/harness-cli",
+      "@softarc/sheriff-core",
+      "lefthook",
+      "@commitlint/cli",
+      "@commitlint/config-conventional",
+      "@testing-library/angular",
+      "@playwright/test",
+      "@axe-core/playwright",
+    ]) {
+      expect(pkg.devDependencies[dep], `${dep} should be a devDependency`).toBeDefined();
+    }
     expect(pkg.prettier).toBe("@treinberger/harness-prettier-config");
+    expect(pkg.scripts.doctor).toBe("harness doctor");
+    expect(pkg.scripts.prepare).toBe("lefthook install");
+    expect(pkg.scripts.e2e).toBe("playwright test");
   });
 
-  it("skips playwright when e2e is false", async () => {
-    const tree = await runner.runSchematic("ng-add", { prefix: "demo", e2e: false }, baseAppTree());
+  it("skips playwright and e2e deps when e2e is false", async () => {
+    const tree = await runner.runSchematic(
+      "ng-add",
+      { ...DEFAULT_OPTIONS, e2e: false },
+      baseAppTree(),
+    );
     expect(tree.exists("/playwright.config.ts")).toBe(false);
+    expect(tree.exists("/e2e/smoke.spec.ts")).toBe(false);
+    const pkg = JSON.parse(tree.readText("/package.json"));
+    expect(pkg.devDependencies["@axe-core/playwright"]).toBeUndefined();
+    expect(pkg.scripts.e2e).toBeUndefined();
+  });
+
+  it("skips sheriff when boundaries is false", async () => {
+    const tree = await runner.runSchematic(
+      "ng-add",
+      { ...DEFAULT_OPTIONS, boundaries: false },
+      baseAppTree(),
+    );
+    expect(tree.exists("/sheriff.config.ts")).toBe(false);
+    expect(tree.readText("/eslint.config.mjs")).toContain("boundaries: false");
+    const pkg = JSON.parse(tree.readText("/package.json"));
+    expect(pkg.devDependencies["@softarc/sheriff-core"]).toBeUndefined();
   });
 });
 ```
 
 Run: `pnpm --filter @treinberger/harness-schematics build && pnpm test`
-Expected: FAIL — `dist/ng-add/index` not found (factory not written yet). The build itself fails first; that is the red state.
+Expected: FAIL — factory not written yet (the build fails first; that is the red state).
 
 - [ ] **Step 6: Write `src/ng-add/index.ts`**
 
@@ -1364,10 +2099,10 @@ import {
   applyTemplates,
   chain,
   filter,
+  forEach,
   mergeWith,
   move,
   url,
-  forEach,
 } from "@angular-devkit/schematics";
 import { NodePackageInstallTask } from "@angular-devkit/schematics/tasks";
 
@@ -1376,22 +2111,49 @@ const HARNESS_VERSION = "v0.1.0";
 interface NgAddOptions {
   prefix: string;
   e2e: boolean;
+  boundaries: boolean;
 }
 
-const HARNESS_DEV_DEPS: Record<string, string> = {
+const CORE_DEV_DEPS: Record<string, string> = {
   "@treinberger/harness-tsconfig": "^0.1.0",
   "@treinberger/harness-prettier-config": "^0.1.0",
   "@treinberger/harness-eslint-config": "^0.1.0",
   "@treinberger/harness-testing": "^0.1.0",
+  "@treinberger/harness-cli": "^0.1.0",
+  lefthook: "^1",
+  "@commitlint/cli": "^19",
+  "@commitlint/config-conventional": "^19",
+  "@testing-library/angular": "^17",
 };
+
+const BOUNDARY_DEV_DEPS: Record<string, string> = {
+  "@softarc/sheriff-core": "^0.18",
+};
+
+const E2E_DEV_DEPS: Record<string, string> = {
+  "@playwright/test": "^1.45",
+  "@axe-core/playwright": "^4",
+};
+
+// Version note: the ranges above are floors known at plan time; at
+// implementation time, set each range to the major that `pnpm add` resolves.
+
+const E2E_FILES = ["playwright.config.ts.template", "e2e/smoke.spec.ts.template"];
+const BOUNDARY_FILES = ["sheriff.config.ts.template"];
 
 function scaffoldFiles(options: NgAddOptions): Rule {
   return mergeWith(
     apply(url("./files"), [
-      filter((path) => options.e2e || !path.endsWith("playwright.config.ts.template")),
+      filter((path) => {
+        const rel = path.startsWith("/") ? path.slice(1) : path;
+        if (!options.e2e && E2E_FILES.includes(rel)) return false;
+        if (!options.boundaries && BOUNDARY_FILES.includes(rel)) return false;
+        return true;
+      }),
       applyTemplates({
         prefix: options.prefix,
         e2e: options.e2e,
+        boundaries: options.boundaries,
         harnessVersion: HARNESS_VERSION,
       }),
       // strip the .template suffix
@@ -1426,11 +2188,18 @@ function updatePackageJson(options: NgAddOptions): Rule {
       devDependencies?: Record<string, string>;
       prettier?: string;
     };
-    pkg.devDependencies = { ...pkg.devDependencies, ...HARNESS_DEV_DEPS };
+    pkg.devDependencies = {
+      ...pkg.devDependencies,
+      ...CORE_DEV_DEPS,
+      ...(options.boundaries ? BOUNDARY_DEV_DEPS : {}),
+      ...(options.e2e ? E2E_DEV_DEPS : {}),
+    };
     pkg.prettier = "@treinberger/harness-prettier-config";
     pkg.scripts = {
       ...pkg.scripts,
       lint: "eslint . && prettier --check .",
+      doctor: "harness doctor",
+      prepare: "lefthook install",
       ...(options.e2e ? { e2e: "playwright test" } : {}),
     };
     tree.overwrite("/package.json", JSON.stringify(pkg, null, 2) + "\n");
@@ -1452,7 +2221,7 @@ export function ngAdd(options: NgAddOptions): Rule {
 - [ ] **Step 7: Run tests to verify they pass**
 
 Run: `pnpm --filter @treinberger/harness-schematics build && pnpm test`
-Expected: all 5 schematic tests PASS. Add `"packages/schematics/test/**/*.test.ts"` to the root `vitest.config.mts` include list if not already matched.
+Expected: all schematic tests PASS (root vitest `include` pattern `packages/*/test/**/*.test.ts` already matches).
 
 - [ ] **Step 8: Write `packages/schematics/README.md`**
 
@@ -1466,28 +2235,103 @@ Expected: all 5 schematic tests PASS. Add `"packages/schematics/test/**/*.test.t
 
     ng add @treinberger/harness-schematics --prefix=myapp
 
-Scaffolds: `harness.config.json`, `eslint.config.mjs`, `CLAUDE.md`,
-`docs/guidelines/`, CI workflow, Playwright config (unless `--e2e=false`),
-extends `tsconfig.json`, registers the shared Prettier config, and installs
-the harness packages.
+Scaffolds: `harness.config.json`, `eslint.config.mjs`, `sheriff.config.ts`,
+`lefthook.yml` + commitlint, `renovate.json`, `CLAUDE.md` +
+`.claude/skills/verify-project/`, `docs/guidelines/`, CI workflow,
+Playwright config with an a11y smoke test (unless `--e2e=false`); extends
+`tsconfig.json`, registers the shared Prettier config, installs all deps.
+
+Flags: `--prefix=<p>` (default `app`), `--e2e=false`, `--boundaries=false`.
+
+## Updates
+
+Future harness majors ship `ng update @treinberger/harness-schematics`
+migrations (see `migrations.json`).
 ```
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add packages/schematics vitest.config.mts pnpm-lock.yaml
-git commit -m "feat: add ng-add schematic scaffolding harness setup into projects"
+git add packages/schematics pnpm-lock.yaml
+git commit -m "feat: add ng-add schematic scaffolding full harness setup"
 ```
 
 ---
 
-### Task 8: Reusable GitHub Actions workflow for consuming projects
+### Task 9: Shared Renovate preset
+
+**Files:**
+- Create: `renovate/default.json`, `renovate.json`
+
+**Interfaces:**
+- Produces: preset referenced by consumers as `github>treinberger/angular-harness//renovate/default.json` (already wired into the Task 8 template).
+
+- [ ] **Step 1: Write `renovate/default.json` (the shared preset)**
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":semanticCommits",
+    "schedule:weekly"
+  ],
+  "packageRules": [
+    {
+      "groupName": "all non-major dependencies",
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "groupName": "harness packages",
+      "matchPackageNames": ["@treinberger/harness-*"]
+    },
+    {
+      "groupName": "angular",
+      "matchPackageNames": ["@angular/*", "@angular-devkit/*", "@schematics/angular"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "matchPackageNames": ["@angular/*", "@angular-devkit/*", "@schematics/angular"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false,
+      "description": "Angular majors are upgraded deliberately via ng update, never by Renovate."
+    }
+  ]
+}
+```
+
+- [ ] **Step 2: Write `renovate.json` (this repo's own config)**
+
+```json
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>treinberger/angular-harness//renovate/default.json"]
+}
+```
+
+- [ ] **Step 3: Validate**
+
+Run: `npx --yes renovate-config-validator renovate/default.json renovate.json`
+Expected: `Config validated successfully`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add renovate renovate.json
+git commit -m "feat: add shared renovate preset for harness projects"
+```
+
+Note: the Renovate GitHub App must be installed on the account and granted access to this repo for consumers to resolve the private preset.
+
+---
+
+### Task 10: Reusable GitHub Actions workflow for consuming projects
 
 **Files:**
 - Create: `.github/workflows/angular-ci.yml`
 
 **Interfaces:**
-- Consumes: consuming projects' scripts `lint`, `test`, `build`, `e2e` (set up by Task 7).
+- Consumes: consuming projects' scripts `lint`, `test`, `build`, `doctor`, `e2e` (set up by Task 8).
 - Produces: `workflow_call` workflow referenced as `treinberger/angular-harness/.github/workflows/angular-ci.yml@main` (later `@v1` once tagged).
 
 - [ ] **Step 1: Write `.github/workflows/angular-ci.yml`**
@@ -1502,6 +2346,9 @@ on:
         type: string
         default: "22"
       e2e:
+        type: boolean
+        default: true
+      audit:
         type: boolean
         default: true
 
@@ -1519,9 +2366,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm doctor
       - run: pnpm lint
       - run: pnpm test
       - run: pnpm build
+      - name: Audit production dependencies
+        if: ${{ inputs.audit }}
+        run: pnpm audit --prod --audit-level=high
 
   e2e:
     if: ${{ inputs.e2e }}
@@ -1546,7 +2397,10 @@ jobs:
           path: playwright-report/
 ```
 
-Note: `secrets.GITHUB_TOKEN` reaches package reads only for repos owned by the same account/org. Document this in Task 10's consuming guide; cross-org consumers need a PAT secret instead.
+Notes:
+- `secrets.GITHUB_TOKEN` reaches package reads only for repos owned by the same account (`treinberger`); cross-owner consumers need a PAT secret (documented in Task 12).
+- Bundle-size budgets are enforced by `pnpm build` itself (Angular budgets in `angular.json` — the CLI generates them; tighten per project).
+- Renovate's `config:best-practices` pins action digests in consuming repos over time; tags here are the floor.
 
 - [ ] **Step 2: Verify syntax**
 
@@ -1557,18 +2411,19 @@ Expected: no syntax errors (action-validator preferred; yaml-lint is the fallbac
 
 ```bash
 git add .github/workflows/angular-ci.yml
-git commit -m "feat: add reusable angular-ci workflow for consuming projects"
+git commit -m "feat: add reusable angular-ci workflow with doctor, audit, and e2e"
 ```
 
 ---
 
-### Task 9: Example consumer app (integration proof)
+### Task 11: Example consumer app (integration proof)
 
 **Files:**
 - Create: `examples/demo-app/` (generated by Angular CLI, then wired to the harness)
+- Modify: root `package.json`, `.github/workflows/ci.yml`
 
 **Interfaces:**
-- Consumes: everything from Tasks 2–8 via the `ng add` schematic, using workspace-local packages.
+- Consumes: everything from Tasks 2–10 via the `ng add` schematic, using workspace-local packages.
 
 - [ ] **Step 1: Generate the app**
 
@@ -1589,6 +2444,7 @@ In `examples/demo-app/package.json`, add:
   "@treinberger/harness-prettier-config": "workspace:*",
   "@treinberger/harness-eslint-config": "workspace:*",
   "@treinberger/harness-testing": "workspace:*",
+  "@treinberger/harness-cli": "workspace:*",
   "@treinberger/harness-schematics": "workspace:*"
 }
 ```
@@ -1597,12 +2453,14 @@ Run: `pnpm install`
 
 - [ ] **Step 3: Run the schematic against the example app**
 
-Run (from `examples/demo-app`, after building schematics):
+Run (from `examples/demo-app`, after building schematics and cli):
 ```bash
+pnpm --filter @treinberger/harness-cli build
 pnpm --filter @treinberger/harness-schematics build
 pnpm exec ng g @treinberger/harness-schematics:ng-add --prefix=demo
+pnpm install
 ```
-Expected: `harness.config.json`, `eslint.config.mjs`, `CLAUDE.md`, `docs/guidelines/`, `.github/workflows/ci.yml`, `playwright.config.ts` created; `tsconfig.json` extended; `package.json` updated. (Using `ng g <collection>:ng-add` instead of `ng add` avoids re-installing from the registry — packages are already linked via workspace.)
+Expected: full consumer layout created (all files from the Task 8 test list); `tsconfig.json` extended; `package.json` wired. (Using `ng g <collection>:ng-add` instead of `ng add` avoids re-installing from the registry — packages are already linked via workspace.) After scaffolding, change the six `^0.1.0` harness dep entries the schematic wrote back to `workspace:*` so the example keeps using local packages.
 
 - [ ] **Step 4: Prove the toolchain end-to-end**
 
@@ -1611,10 +2469,47 @@ Run (from `examples/demo-app`):
 pnpm lint
 pnpm test
 pnpm build
+pnpm doctor
 ```
-Expected: all green. Fix any friction **in the packages, not the example** (the example is the integration test). Common issues to expect and fix at the source: missing peer deps in the eslint-config package; `harnessTestProviders()` naming vs. installed Angular major; prettier fighting the generated code (run `pnpm exec prettier --write .` once and commit).
+Expected: all green. Fix any friction **in the packages, not the example** (the example is the integration test). Common issues to expect and fix at the source: missing peer deps in the eslint-config package; sheriff flat-config export name; zoneless provider naming vs. installed Angular major; prettier fighting generated code (run `pnpm exec prettier --write .` once and commit); doctor's version-alignment check vs. `workspace:*` entries (all six are the identical string, so the check passes — if not, teach doctor to treat `workspace:*` as aligned).
 
-- [ ] **Step 5: Prove the override mechanism**
+- [ ] **Step 5: Prove boundary enforcement (Sheriff)**
+
+Create two features and an illegal cross-feature import:
+
+```bash
+mkdir -p src/app/features/alpha src/app/features/beta
+```
+
+`src/app/features/alpha/alpha.service.ts`:
+
+```ts
+import { Injectable } from '@angular/core';
+
+@Injectable({ providedIn: 'root' })
+export class AlphaService {
+  greet(): string {
+    return 'alpha';
+  }
+}
+```
+
+`src/app/features/beta/beta.service.ts`:
+
+```ts
+import { Injectable, inject } from '@angular/core';
+import { AlphaService } from '../alpha/alpha.service';
+
+@Injectable({ providedIn: 'root' })
+export class BetaService {
+  private readonly alpha = inject(AlphaService);
+}
+```
+
+Run: `pnpm lint`
+Expected: a Sheriff dependency-rule error on the `beta → alpha` import. Then delete `beta.service.ts`'s illegal import (make `greet` local), re-run, expect green. Keep both services as regression fixtures with a legal shape.
+
+- [ ] **Step 6: Prove the override mechanism**
 
 Add to `examples/demo-app/eslint.config.mjs`:
 
@@ -1633,50 +2528,74 @@ Add a `console.log('x');` to `src/app/app.ts`, run `pnpm lint`, expect a `no-con
 `no-console`). Use the `Logger` service in `core/logging/` once it exists.
 ```
 
-- [ ] **Step 6: Exclude the example from publishing and keep CI green**
+- [ ] **Step 7: Prove the testing helpers**
 
-Ensure `examples/demo-app/.github/` is deleted (the scaffolded consumer CI must not run inside this monorepo — it's only meaningful in a standalone repo):
+Replace the generated `src/app/app.spec.ts` with:
+
+```ts
+import { App } from './app';
+import { renderWithHarness } from '@treinberger/harness-testing/testing-library';
+
+describe('App', () => {
+  it('renders', async () => {
+    const { container } = await renderWithHarness(App);
+    expect(container).toBeTruthy();
+  });
+});
+```
+
+Run: `pnpm test` — expect green. Then run the scaffolded a11y smoke e2e:
+
+```bash
+pnpm exec playwright install --with-deps chromium
+pnpm e2e
+```
+Expected: `e2e/smoke.spec.ts` passes including `expectNoA11yViolations`. If the default Angular starter page has axe violations, fix the page (it is our template baseline), not the check.
+
+- [ ] **Step 8: Exclude the example's consumer CI and wire root CI**
+
+The scaffolded consumer CI must not run inside this monorepo:
 
 ```bash
 rm -rf examples/demo-app/.github
 ```
 
-Add example verification to root `package.json` scripts:
+Add to root `package.json` scripts:
 
 ```json
-"verify:example": "pnpm --filter demo-app lint && pnpm --filter demo-app test && pnpm --filter demo-app build"
+"build:packages": "pnpm -r --filter './packages/*' run --if-present build",
+"verify:example": "pnpm --filter demo-app lint && pnpm --filter demo-app test && pnpm --filter demo-app build && pnpm --filter demo-app doctor"
 ```
 
-And update the `.github/workflows/ci.yml` verify job — the build steps must run **before** `pnpm test`, because the schematic tests load `collection.json`, which points into `dist/`:
+Update the `.github/workflows/ci.yml` verify job — builds must run **before** `pnpm test`, because the schematic tests load `collection.json`, which points into `dist/`:
 
 ```yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: pnpm --filter @treinberger/harness-testing build
-      - run: pnpm --filter @treinberger/harness-schematics build
+      - run: pnpm run build:packages
       - run: pnpm test
       - run: pnpm run verify:example
 ```
 
-- [ ] **Step 7: Verify everything**
+- [ ] **Step 9: Verify everything**
 
-Run: `pnpm test && pnpm run verify:example`
+Run: `pnpm run build:packages && pnpm test && pnpm run verify:example`
 Expected: all green.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A
-git commit -m "feat: add demo-app example proving ng-add integration and override layering"
+git commit -m "feat: add demo-app proving ng-add, boundaries, overrides, testing helpers"
 ```
 
 ---
 
-### Task 10: Release tooling and adoption docs
+### Task 12: Release tooling and adoption docs
 
 **Files:**
-- Create: `.changeset/config.json`, `.github/workflows/release.yml`, `docs/consuming-a-project.md`, `README.md`
-- Modify: root `package.json`
+- Create: `.changeset/config.json`, `.github/workflows/release.yml`, `docs/consuming-a-project.md`
+- Modify: root `package.json`, `README.md`
 
 **Interfaces:**
 - Produces: versioned releases of all packages to GitHub Packages via Changesets; a step-by-step adoption guide.
@@ -1694,17 +2613,18 @@ Edit `.changeset/config.json`:
   "commit": false,
   "access": "restricted",
   "baseBranch": "main",
+  "fixed": [["@treinberger/harness-*"]],
   "ignore": ["demo-app"]
 }
 ```
 
+(`fixed` keeps all harness packages on one version — doctor's alignment check assumes this.)
+
 Add to root `package.json` scripts:
 
 ```json
-"release": "pnpm --filter './packages/*' build && pnpm changeset publish"
+"release": "pnpm run build:packages && pnpm changeset publish"
 ```
-
-(`--filter './packages/*'` with `build` only runs where a build script exists — `testing` and `schematics`; config packages have nothing to build. If pnpm errors on packages without the script, use `--if-present`: `pnpm -r --filter './packages/*' run --if-present build`.)
 
 - [ ] **Step 2: Write `.github/workflows/release.yml`**
 
@@ -1753,14 +2673,20 @@ jobs:
       npm login --registry=https://npm.pkg.github.com
       # username: your GitHub username, password: a PAT with read:packages
 
+- The Renovate GitHub App installed on the repo (for automated updates).
+
 ## Steps
 
 1. `pnpm dlx @angular/cli@latest new my-app --package-manager=pnpm`
 2. `cd my-app && echo "@treinberger:registry=https://npm.pkg.github.com" >> .npmrc`
 3. `ng add @treinberger/harness-schematics --prefix=myapp`
-4. Review the generated `CLAUDE.md` and `docs/guidelines/README.md`;
+4. `pnpm exec lefthook install` (also runs automatically via the `prepare` script)
+5. Review the generated `CLAUDE.md` and `docs/guidelines/README.md`;
    add project-specific guidelines as separate markdown files.
-5. Commit. CI runs via the reusable harness workflow.
+6. Tag your features in `sheriff.config.ts` as they appear (the scaffolded
+   `features/<feature>` placeholder covers the default layout).
+7. `pnpm doctor` — must be green before the first commit.
+8. Commit. CI runs via the reusable harness workflow.
 
 ## Project-specific overrides — extension points
 
@@ -1768,16 +2694,22 @@ jobs:
 |---------|-----------------|
 | Guidelines | `docs/guidelines/*.md`, marked with "**Overrides core:** …" |
 | ESLint | `extraTs` / `extraTemplate` in `eslint.config.mjs` |
+| Boundaries | `modules`/`depRules` in `sheriff.config.ts` (document the decision) |
 | Prettier | replace the `prettier` package.json key with a `.prettierrc.mjs` spreading the base |
 | tsconfig | `compilerOptions` in the project `tsconfig.json` (wins over base) |
 | Playwright | extra options passed to `defineHarnessPlaywrightConfig` |
-| CI | inputs of the reusable workflow; extra jobs alongside `harness-ci` |
+| A11y checks | `disableRules` per call, with a comment explaining why |
+| Renovate | additional `packageRules` after the `extends` entry |
+| Hooks | edit `lefthook.yml`; `LEFTHOOK=0 git commit` for WIP on private branches |
+| CI | inputs of the reusable workflow (`e2e`, `audit`, `node-version`); extra jobs alongside `harness-ci` |
 
 ## Updating
 
-Bump the `@treinberger/harness-*` versions, run `pnpm install`, and update
-`harnessVersion` in `harness.config.json` to the matching harness tag.
-Read the changelog for guideline changes.
+Renovate opens a grouped PR for `@treinberger/harness-*` bumps. After
+merging: update `harnessVersion` in `harness.config.json` to the matching
+harness tag, read the changelog for guideline changes, and run
+`ng update @treinberger/harness-schematics` when the changelog says a
+migration ships. `pnpm doctor` verifies the result.
 
 ## Note on CI package access
 
@@ -1786,36 +2718,40 @@ repo belongs to the same owner (`treinberger`). Otherwise create a PAT with
 `read:packages` and pass it as a secret.
 ```
 
-- [ ] **Step 4: Write root `README.md`**
+- [ ] **Step 4: Replace root `README.md`**
 
 ```markdown
 # angular-harness
 
-Reusable development harness for Angular web projects: shared tooling
-presets, layered guidelines (core + per-project overrides), one-command
-project onboarding via `ng add`, and reusable CI.
+State-of-the-art development harness for Angular web projects: shared tooling
+presets, enforced architecture boundaries, layered guidelines (core +
+per-project overrides), agentic-development support, compliance doctor,
+automated dependency management, and reusable CI.
 
 | Package | Purpose |
 |---------|---------|
 | `@treinberger/harness-tsconfig` | strict TS base config |
 | `@treinberger/harness-prettier-config` | shared Prettier config |
-| `@treinberger/harness-eslint-config` | ESLint flat-config factory |
-| `@treinberger/harness-testing` | Playwright factory + zoneless TestBed providers |
-| `@treinberger/harness-schematics` | `ng add` onboarding schematic |
+| `@treinberger/harness-eslint-config` | ESLint flat-config factory + Sheriff boundaries |
+| `@treinberger/harness-testing` | Playwright factory, axe a11y helper, Testing Library wrapper, zoneless TestBed providers |
+| `@treinberger/harness-cli` | `harness doctor` — config-drift detection |
+| `@treinberger/harness-schematics` | `ng add` onboarding + `ng update` migrations |
 
-- **Adopt in a project:** see [docs/consuming-a-project.md](docs/consuming-a-project.md)
-- **Guidelines & layering model:** see [guidelines/](guidelines/)
-- **Implementation plan:** see [docs/plans/](docs/plans/)
+Also in this repo: core guidelines (`guidelines/`), shared Renovate preset
+(`renovate/default.json`), reusable CI workflow
+(`.github/workflows/angular-ci.yml`).
+
+- **Adopt in a project:** [docs/consuming-a-project.md](docs/consuming-a-project.md)
+- **Guidelines & layering model:** [guidelines/](guidelines/)
+- **Implementation plan:** [docs/plans/](docs/plans/)
 ```
-
-This replaces the bootstrap README committed when the repo was created.
 
 - [ ] **Step 5: Create the first changeset and verify**
 
 Run:
 ```bash
-pnpm changeset   # select all five packages, minor, message: "initial harness release"
-pnpm test && pnpm lint
+pnpm changeset   # select all six packages, minor, message: "initial harness release"
+pnpm run build:packages && pnpm test && pnpm lint
 ```
 Expected: changeset file created; all green.
 
@@ -1832,17 +2768,22 @@ After the release workflow publishes, update consuming docs/templates if any res
 
 ---
 
-## Self-Review Checklist (for the implementer, after Task 10)
+## Self-Review Checklist (for the implementer, after Task 12)
 
 1. **Fresh-project smoke test:** In a directory outside this repo, follow `docs/consuming-a-project.md` literally against the published packages. Every command must work as written.
-2. **Override proof:** In that fresh project, add an ESLint override via `extraTs` and a guideline override via `docs/guidelines/` — both must take effect / be documented.
-3. **CI proof:** Push the fresh project to a private repo under `treinberger`; the reusable workflow must pass.
-4. **Naming consistency:** grep the repo for `@treinberger/harness-` — every reference must match the five package names exactly.
-5. **No placeholders:** grep for `TODO`, `TBD`, `FIXME` — none may remain in shipped files.
+2. **Override proof:** In that fresh project, add an ESLint override via `extraTs`, a boundary change via `sheriff.config.ts`, and a guideline override via `docs/guidelines/` — all must take effect / be documented.
+3. **Enforcement proof:** A cross-feature import, a missing OnPush, a bad commit message, and a deleted required file must each be caught (Sheriff, ESLint, commitlint, doctor respectively).
+4. **CI proof:** Push the fresh project to a private repo under `treinberger`; the reusable workflow must pass end-to-end including doctor, audit, and the a11y e2e smoke test.
+5. **Naming consistency:** grep the repo for `@treinberger/harness-` — every reference must match the six package names exactly.
+6. **No placeholders:** grep shipped files for `TODO`, `TBD`, `FIXME` — none may remain.
 
 ## Known risks / decisions already made
 
 - **Registry = GitHub Packages** (restricted access, free for private use, auth via existing GitHub credentials). Alternative (public npmjs) rejected: harness conventions are internal.
-- **Version drift:** exact dependency majors (angular-eslint, typescript-eslint, Playwright) are resolved at implementation time; two plan steps (4.5, 5.6) call out the known rename risks (`prefer-on-push` rule id, zoneless provider name).
+- **Sheriff over eslint-plugin-boundaries / Nx**: Sheriff is purpose-built for Angular standalone architectures, config-light, and needs no workspace migration. Nx rejected as harness-wide default: too invasive for single-app repos.
+- **Version drift:** exact dependency majors (angular-eslint, typescript-eslint, sheriff, Playwright, Testing Library, commitlint) are resolved at implementation time; plan steps call out the known rename risks (`prefer-on-push` rule id, sheriff flat-config export, zoneless provider name).
 - **`@main` workflow reference** in scaffolded CI until `v1` tag exists; switch the template to `@v1` in a follow-up changeset after the first stable tag.
+- **Renovate preset from a private repo** requires the Renovate app to have access to `angular-harness`; without it, consumers see a preset-resolution warning — grant access, don't inline the preset.
+- **Storybook / visual regression** deliberately out of scope for v1 (YAGNI for current project sizes); revisit when a design-system package emerges.
+- **pnpm catalogs** rejected for now: `fixed` changesets versioning plus doctor's alignment check already prevent drift with less machinery.
 - **Windows** is out of scope; harness assumes macOS/Linux dev machines and ubuntu CI runners.
