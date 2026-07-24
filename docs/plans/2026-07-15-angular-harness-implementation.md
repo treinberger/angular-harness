@@ -2967,6 +2967,7 @@ After the release workflow publishes, update consuming docs/templates if any res
 5. **Brownfield proof:** Take (or synthesize) an NgModule-based Angular app with `*ngIf` templates and constructor DI; follow `docs/adopting-existing-project.md`. After the migrations plus a `legacyDirs` entry for one deliberately unmigrated directory, `pnpm lint` must be green with warnings confined to that directory, and `legacy-baseline.md` must exist.
 6. **Naming consistency:** grep the repo for `@treinberger/harness-` — every reference must match the six package names exactly.
 7. **No placeholders:** grep shipped files for `TODO`, `TBD`, `FIXME` — none may remain.
+8. **Agent entry points in sync:** the repo-root `CLAUDE.md` (Job A/B runbook) and `.claude/skills/harness-setup/SKILL.md` predate implementation — verify every file they reference now exists (`docs/consuming-a-project.md`, `docs/adopting-existing-project.md`) and that their preflight command matches the published package name; fix anything that moved.
 
 ## Known risks / decisions already made
 
