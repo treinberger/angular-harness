@@ -2,9 +2,9 @@
 
 > **For agentic workers:** Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Each task ends with a passing verification step and a commit. Do not start a task before the previous one is committed. If a `superpowers:subagent-driven-development` or `superpowers:executing-plans` skill is available in your environment, use it; otherwise execute the tasks sequentially in order.
 
-**Goal:** Build a state-of-the-art, reusable development harness for all future Angular web projects: shared versioned tooling presets (TypeScript, ESLint, Prettier, testing), **enforced** architecture boundaries (Sheriff), a layered guidelines system with per-project overrides, an agentic-development layer (CLAUDE.md + project verify skill), a `harness doctor` compliance CLI, automated dependency management (shared Renovate preset), git hygiene (lefthook + commitlint), one-command onboarding via `ng add` with an `ng update` migration path, and hardened reusable CI.
+**Goal:** Build a state-of-the-art, reusable development harness for Angular web projects — greenfield **and existing codebases**: shared versioned tooling presets (TypeScript, ESLint, Prettier, testing), **enforced** architecture boundaries (Sheriff), a layered guidelines system with per-project overrides, an agentic-development layer (CLAUDE.md + project verify skill), a `harness doctor` compliance CLI, automated dependency management (shared Renovate preset), git hygiene (lefthook + commitlint), one-command onboarding via `ng add` with an `ng update` migration path, and hardened reusable CI.
 
-**Architecture:** A pnpm monorepo (`angular-harness`) publishing focused npm packages under the `@treinberger` scope to GitHub Packages. Consuming projects run `ng add @treinberger/harness-schematics`, which scaffolds configs, `harness.config.json`, layered guidelines, agent files, hooks, Renovate config, and CI. Guidelines follow a two-layer model: **core** guidelines live here (version-pinned); **project** guidelines live in each consuming repo and win on conflict. Where a guideline can be enforced by a machine, it is: ESLint + Sheriff enforce style and boundaries, `harness doctor` detects config drift, CI blocks on all of it. Prose guidelines are the fallback, not the mechanism.
+**Architecture:** A pnpm monorepo (`angular-harness`) publishing focused npm packages under the `@treinberger` scope to GitHub Packages. Consuming projects run `ng add @treinberger/harness-schematics`, which scaffolds configs, `harness.config.json`, layered guidelines, agent files, hooks, Renovate config, and CI. Guidelines follow a two-layer model: **core** guidelines live here (version-pinned); **project** guidelines live in each consuming repo and win on conflict. Where a guideline can be enforced by a machine, it is: ESLint + Sheriff enforce style and boundaries, `harness doctor` detects config drift, CI blocks on all of it. Prose guidelines are the fallback, not the mechanism. The reusability lives in this repo, not in the consuming project: a project — new or existing — only holds thin config files plus its own overrides. Existing codebases adopt through the same `ng add` plus a documented brownfield path: official Angular migrations first, then a **legacy ratchet** (`legacyDirs` in the ESLint factory, documented tsconfig relaxations) that downgrades modernization rules to warnings for listed legacy directories — the list may only ever shrink.
 
 **Tech Stack:** Angular ≥ 21 (standalone, signals, zoneless), TypeScript strict, Node 22 LTS, pnpm, ESLint 9 flat config (`angular-eslint` + `typescript-eslint`), Sheriff (`@softarc/sheriff-core`) for module boundaries, Prettier 3, Vitest (unit, via `@angular/build:unit-test`), Angular Testing Library, Playwright + `@axe-core/playwright` (e2e + a11y), lefthook + commitlint, Renovate, Angular Schematics, GitHub Actions reusable workflows, Changesets.
 
@@ -469,7 +469,7 @@ git commit -m "feat: add @treinberger/harness-prettier-config"
 - Test: `packages/eslint-config/test/lint.test.ts`, `packages/eslint-config/test/fixture/bad.component.ts`, `packages/eslint-config/test/fixture/tsconfig.json`
 
 **Interfaces:**
-- Produces: `defineHarnessEslintConfig(options: { prefix?: string; boundaries?: boolean; extraTs?: object[]; extraTemplate?: object[] }): FlatConfig[]` — default export is `defineHarnessEslintConfig()` with prefix `app` and `boundaries: false` (the scaffolded consumer config passes `boundaries: true` because the schematic also scaffolds `sheriff.config.ts`).
+- Produces: `defineHarnessEslintConfig(options: { prefix?: string; boundaries?: boolean; legacyDirs?: string[]; extraTs?: object[]; extraTemplate?: object[] }): FlatConfig[]` — default export is `defineHarnessEslintConfig()` with prefix `app` and `boundaries: false` (the scaffolded consumer config passes `boundaries: true` because the schematic also scaffolds `sheriff.config.ts`). `legacyDirs` is the brownfield ratchet: for the listed directories, modernization rules are downgraded to warnings so existing code lints green while new code stays strict.
 
 - [ ] **Step 1: Install dependencies for the package**
 
@@ -582,6 +582,24 @@ describe("harness-eslint-config", () => {
     expect(hasSheriffRule(withBoundaries)).toBe(true);
     expect(hasSheriffRule(withoutBoundaries)).toBe(false);
   });
+
+  it("downgrades modernization rules to warnings inside legacyDirs", () => {
+    const configs = defineHarnessEslintConfig({ legacyDirs: ["src/app/legacy"] }) as Array<{
+      files?: string[];
+      rules?: Record<string, unknown>;
+    }>;
+    const legacyTs = configs.find((c) =>
+      (c.files ?? []).includes("src/app/legacy/**/*.ts"),
+    );
+    const legacyHtml = configs.find((c) =>
+      (c.files ?? []).includes("src/app/legacy/**/*.html"),
+    );
+    expect(legacyTs?.rules?.["@angular-eslint/prefer-on-push-component-change-detection"]).toBe(
+      "warn",
+    );
+    expect(legacyTs?.rules?.["@angular-eslint/prefer-standalone"]).toBe("warn");
+    expect(legacyHtml?.rules?.["@angular-eslint/template/prefer-control-flow"]).toBe("warn");
+  });
 });
 ```
 
@@ -607,6 +625,10 @@ import sheriff from '@softarc/eslint-plugin-sheriff';
  * @param {boolean} [options.boundaries=false] Enable Sheriff module-boundary
  *   enforcement. Requires a `sheriff.config.ts` in the project root
  *   (scaffolded by @treinberger/harness-schematics).
+ * @param {string[]} [options.legacyDirs=[]] Brownfield ratchet: directories
+ *   (no trailing slash or glob) of pre-harness code. Modernization rules are
+ *   downgraded to warnings there. This list may only ever SHRINK — document
+ *   it in docs/guidelines/ and remove entries as code is modernized.
  * @param {object[]} [options.extraTs=[]] Additional flat-config objects appended for *.ts files.
  * @param {object[]} [options.extraTemplate=[]] Additional flat-config objects appended for *.html files.
  * @returns {import('typescript-eslint').ConfigArray}
@@ -614,6 +636,7 @@ import sheriff from '@softarc/eslint-plugin-sheriff';
 export function defineHarnessEslintConfig({
   prefix = 'app',
   boundaries = false,
+  legacyDirs = [],
   extraTs = [],
   extraTemplate = [],
 } = {}) {
@@ -664,6 +687,19 @@ export function defineHarnessEslintConfig({
           },
         ]
       : []),
+    ...(legacyDirs.length
+      ? [
+          {
+            files: legacyDirs.map((dir) => `${dir}/**/*.ts`),
+            rules: {
+              '@angular-eslint/prefer-on-push-component-change-detection': 'warn',
+              '@angular-eslint/prefer-standalone': 'warn',
+              '@typescript-eslint/explicit-member-accessibility': 'warn',
+              '@typescript-eslint/consistent-type-imports': 'warn',
+            },
+          },
+        ]
+      : []),
     ...extraTs,
     {
       files: ['**/*.html'],
@@ -675,6 +711,16 @@ export function defineHarnessEslintConfig({
         '@angular-eslint/template/prefer-control-flow': 'error',
       },
     },
+    ...(legacyDirs.length
+      ? [
+          {
+            files: legacyDirs.map((dir) => `${dir}/**/*.html`),
+            rules: {
+              '@angular-eslint/template/prefer-control-flow': 'warn',
+            },
+          },
+        ]
+      : []),
     ...extraTemplate,
   );
 }
@@ -708,11 +754,17 @@ module-boundary enforcement.
     export default defineHarnessEslintConfig({
       prefix: 'myapp',
       boundaries: true, // requires sheriff.config.ts (scaffolded by ng add)
+      // Brownfield only: pre-harness directories where modernization rules
+      // are warnings, not errors. Ratchet: this list may only shrink.
+      legacyDirs: [],
       extraTs: [
         // project-specific rule overrides go here and win over harness defaults
         { files: ['**/*.ts'], rules: { 'no-console': 'error' } },
       ],
     });
+
+See `docs/adopting-existing-project.md` in the harness repo for the full
+brownfield adoption flow.
 ```
 
 - [ ] **Step 7: Commit**
@@ -1766,6 +1818,10 @@ import { defineHarnessEslintConfig } from '@treinberger/harness-eslint-config';
 export default defineHarnessEslintConfig({
   prefix: '<%= prefix %>',
   boundaries: <%= boundaries %>,
+  // Brownfield ratchet (see docs/adopting-existing-project.md in the harness
+  // repo): pre-harness directories where modernization rules are warnings.
+  // This list may only ever shrink.
+  legacyDirs: [],
   // Project-specific rule overrides win over harness defaults:
   extraTs: [],
   extraTemplate: [],
@@ -1881,6 +1937,9 @@ task complete: lint + test + build + doctor, plus e2e for user-facing changes.
 - Never disable the shared ESLint/Prettier/tsconfig presets wholesale, never
   edit `sheriff.config.ts` dep rules to silence a boundary error — extend via
   the documented extension points; escalate real conflicts to a human.
+- If `docs/guidelines/legacy-baseline.md` exists: never ADD to the legacy
+  baseline or to `legacyDirs`; when touching a legacy file, upgrade it to
+  the full standard (boy-scout rule).
 - Every bugfix starts with a failing test.
 ```
 
@@ -2594,7 +2653,7 @@ git commit -m "feat: add demo-app proving ng-add, boundaries, overrides, testing
 ### Task 12: Release tooling and adoption docs
 
 **Files:**
-- Create: `.changeset/config.json`, `.github/workflows/release.yml`, `docs/consuming-a-project.md`
+- Create: `.changeset/config.json`, `.github/workflows/release.yml`, `docs/consuming-a-project.md`, `docs/adopting-existing-project.md`
 - Modify: root `package.json`, `README.md`
 
 **Interfaces:**
@@ -2664,6 +2723,9 @@ jobs:
 ```markdown
 # Adopting the harness in a new Angular project
 
+> For an EXISTING codebase, follow
+> [adopting-existing-project.md](adopting-existing-project.md) instead.
+
 ## Prerequisites
 
 - Node 22+, pnpm 9+
@@ -2718,7 +2780,134 @@ repo belongs to the same owner (`treinberger`). Otherwise create a PAT with
 `read:packages` and pass it as a secret.
 ```
 
-- [ ] **Step 4: Replace root `README.md`**
+- [ ] **Step 4: Write `docs/adopting-existing-project.md`**
+
+```markdown
+# Adopting the harness in an EXISTING Angular project
+
+The harness is not greenfield-only. An existing codebase adopts the same
+packages and the same `ng add` — plus a ratchet so existing code lints green
+while all new code is held to the full standard.
+
+**Principles**
+
+- Never weaken the harness presets globally; confine relaxations to
+  explicitly listed legacy scope.
+- Every relaxation is documented and may only ever shrink ("ratchet").
+- Prefer running the official Angular migrations over relaxing rules.
+
+## Step 0 — Preconditions
+
+- Working tree clean, CI (or at least build + tests) green before you start.
+- Angular ≥ 21. If older, upgrade first, one major at a time:
+  `ng update @angular/cli@<major> @angular/core@<major>` — commit per major.
+- Switch the repo to pnpm if it isn't already (`corepack enable pnpm`,
+  reinstall, commit the lockfile).
+
+## Step 1 — ng add (same as greenfield)
+
+    echo "@treinberger:registry=https://npm.pkg.github.com" >> .npmrc
+    ng add @treinberger/harness-schematics --prefix=<existing-prefix>
+
+Use the selector prefix the codebase ALREADY uses — check `angular.json`
+(`projects.*.prefix`). Changing the prefix of an existing app is a separate,
+deliberate refactor.
+
+If the project has an existing `eslint.config.*`, `.prettierrc*`,
+`.husky/`, or CI workflow, the scaffold does not delete them: port any
+project-specific rules into the harness extension points (`extraTs`,
+`docs/guidelines/`), then delete the old files. Husky is replaced by
+lefthook; commit hooks must not run twice.
+
+## Step 2 — Modernize with official Angular migrations
+
+Run each, review the diff, commit separately:
+
+    ng generate @angular/core:standalone      # NgModules → standalone (3 modes; run all)
+    ng generate @angular/core:control-flow    # *ngIf/*ngFor → @if/@for
+    ng generate @angular/core:inject          # constructor DI → inject()
+    ng generate @angular/core:signal-inputs   # @Input() → input()
+    ng generate @angular/core:output-migration # @Output() → output()
+
+(Names as of Angular 21 — check `ng generate @angular/core: --help` for the
+installed major.) These migrations remove most violations for free.
+
+## Step 3 — TypeScript strictness
+
+`pnpm build` after extending the harness tsconfig. If the error count is
+manageable, fix forward. If not, relax ONLY the newly-failing flags in the
+project `tsconfig.json` (it wins over the base), e.g.:
+
+    "compilerOptions": {
+      "exactOptionalPropertyTypes": false,
+      "noUncheckedIndexedAccess": false
+    }
+
+Record each relaxation in `docs/guidelines/legacy-baseline.md` (see Step 6).
+`strict: true` itself is non-negotiable — if the codebase doesn't compile
+under `strict`, fix that first; it predates the harness.
+
+## Step 4 — ESLint ratchet
+
+    pnpm lint
+
+For directories with bulk violations that the migrations couldn't fix, list
+them in `eslint.config.mjs`:
+
+    legacyDirs: ['src/app/legacy-billing', 'src/app/admin'],
+
+Result: modernization rules are warnings there (visible, not blocking);
+everywhere else they are errors. Do NOT list `src/app` wholesale — pick the
+actual offending subtrees, keep the strict surface as large as possible.
+
+## Step 5 — Boundaries (Sheriff)
+
+Map the REAL existing structure in `sheriff.config.ts` `modules`, even if it
+is not core/shared/features. Start with `depRules` that describe today's
+legal dependencies (lint must pass), then tighten rule by rule as you
+untangle. If the structure is a ball of mud, set `boundaries: false` in
+`harness.config.json` + `eslint.config.mjs`, document it as an override, and
+introduce Sheriff per-subtree later. A wrong-but-green boundary config is
+worse than none.
+
+## Step 6 — Write the baseline document
+
+`docs/guidelines/legacy-baseline.md`:
+
+    # Legacy Baseline (ratchet — entries may only be removed)
+
+    **Overrides core:** strict tsconfig flags and modernization lint rules
+    are relaxed for the scopes below — because this code predates the
+    harness (adopted <date>).
+
+    | Relaxation | Scope | Exit criterion |
+    |------------|-------|----------------|
+    | exactOptionalPropertyTypes: false | whole project | error count 0 under flag |
+    | legacyDirs: src/app/admin | admin feature | feature modernized |
+
+    Boy-scout rule: any PR touching a legacy file upgrades it to the full
+    standard and shrinks this table when its scope is done.
+
+## Step 7 — Tests, e2e, doctor
+
+- Existing Karma/Jasmine tests: migrate the runner to Vitest via
+  `@angular/build:unit-test` (jasmine-style APIs largely map); new tests use
+  `renderWithHarness`.
+- Add the scaffolded a11y smoke e2e. If existing pages have axe violations,
+  either fix them now or pass `disableRules` with a comment and an entry in
+  the baseline table.
+- `pnpm doctor` must be green — doctor checks wiring, not code style, so
+  legacy code doesn't affect it.
+
+## Step 8 — Done criteria
+
+- `pnpm lint && pnpm test && pnpm build && pnpm doctor` green.
+- CI runs the reusable harness workflow.
+- `legacy-baseline.md` exists, is referenced from `CLAUDE.md`
+  (agents must respect the ratchet), and has an exit criterion per row.
+```
+
+- [ ] **Step 5: Replace root `README.md`**
 
 ```markdown
 # angular-harness
@@ -2741,12 +2930,13 @@ Also in this repo: core guidelines (`guidelines/`), shared Renovate preset
 (`renovate/default.json`), reusable CI workflow
 (`.github/workflows/angular-ci.yml`).
 
-- **Adopt in a project:** [docs/consuming-a-project.md](docs/consuming-a-project.md)
+- **Adopt in a new project:** [docs/consuming-a-project.md](docs/consuming-a-project.md)
+- **Adopt in an existing project:** [docs/adopting-existing-project.md](docs/adopting-existing-project.md)
 - **Guidelines & layering model:** [guidelines/](guidelines/)
 - **Implementation plan:** [docs/plans/](docs/plans/)
 ```
 
-- [ ] **Step 5: Create the first changeset and verify**
+- [ ] **Step 6: Create the first changeset and verify**
 
 Run:
 ```bash
@@ -2755,7 +2945,7 @@ pnpm run build:packages && pnpm test && pnpm lint
 ```
 Expected: changeset file created; all green.
 
-- [ ] **Step 6: Commit and tag**
+- [ ] **Step 7: Commit and tag**
 
 ```bash
 git add -A
@@ -2774,8 +2964,9 @@ After the release workflow publishes, update consuming docs/templates if any res
 2. **Override proof:** In that fresh project, add an ESLint override via `extraTs`, a boundary change via `sheriff.config.ts`, and a guideline override via `docs/guidelines/` — all must take effect / be documented.
 3. **Enforcement proof:** A cross-feature import, a missing OnPush, a bad commit message, and a deleted required file must each be caught (Sheriff, ESLint, commitlint, doctor respectively).
 4. **CI proof:** Push the fresh project to a private repo under `treinberger`; the reusable workflow must pass end-to-end including doctor, audit, and the a11y e2e smoke test.
-5. **Naming consistency:** grep the repo for `@treinberger/harness-` — every reference must match the six package names exactly.
-6. **No placeholders:** grep shipped files for `TODO`, `TBD`, `FIXME` — none may remain.
+5. **Brownfield proof:** Take (or synthesize) an NgModule-based Angular app with `*ngIf` templates and constructor DI; follow `docs/adopting-existing-project.md`. After the migrations plus a `legacyDirs` entry for one deliberately unmigrated directory, `pnpm lint` must be green with warnings confined to that directory, and `legacy-baseline.md` must exist.
+6. **Naming consistency:** grep the repo for `@treinberger/harness-` — every reference must match the six package names exactly.
+7. **No placeholders:** grep shipped files for `TODO`, `TBD`, `FIXME` — none may remain.
 
 ## Known risks / decisions already made
 
