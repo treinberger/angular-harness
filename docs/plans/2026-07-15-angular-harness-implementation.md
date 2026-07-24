@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Each task ends with a passing verification step and a commit. Do not start a task before the previous one is committed. If a `superpowers:subagent-driven-development` or `superpowers:executing-plans` skill is available in your environment, use it; otherwise execute the tasks sequentially in order.
 
-**Goal:** Build a state-of-the-art, reusable development harness for Angular web projects — greenfield **and existing codebases**: shared versioned tooling presets (TypeScript, ESLint, Prettier, testing), **enforced** architecture boundaries (Sheriff), a layered guidelines system with per-project overrides, an agentic-development layer (CLAUDE.md + project verify skill), a `harness doctor` compliance CLI, automated dependency management (shared Renovate preset), git hygiene (lefthook + commitlint), one-command onboarding via `ng add` with an `ng update` migration path, and hardened reusable CI.
+**Goal:** Build a state-of-the-art, reusable development harness for Angular web projects — greenfield **and existing codebases**: shared versioned tooling presets (TypeScript, ESLint, Prettier, testing), **enforced** architecture boundaries (Sheriff), a layered guidelines system with per-project overrides, a **generated agent meta-layer** per project (CLAUDE.md, AGENTS.md, a skill toolkit — verify, new-feature, modernize-legacy, update-harness —, a reviewer subagent, and pre-approved safe permissions), a `harness doctor` compliance CLI, automated dependency management (shared Renovate preset), git hygiene (lefthook + commitlint), one-command onboarding via `ng add` with an `ng update` migration path, and hardened reusable CI.
 
 **Architecture:** A pnpm monorepo (`angular-harness`) publishing focused npm packages under the `@treinberger` scope to GitHub Packages. Consuming projects run `ng add @treinberger/harness-schematics`, which scaffolds configs, `harness.config.json`, layered guidelines, agent files, hooks, Renovate config, and CI. Guidelines follow a two-layer model: **core** guidelines live here (version-pinned); **project** guidelines live in each consuming repo and win on conflict. Where a guideline can be enforced by a machine, it is: ESLint + Sheriff enforce style and boundaries, `harness doctor` detects config drift, CI blocks on all of it. Prose guidelines are the fallback, not the mechanism. The reusability lives in this repo, not in the consuming project: a project — new or existing — only holds thin config files plus its own overrides. Existing codebases adopt through the same `ng add` plus a documented brownfield path: official Angular migrations first, then a **legacy ratchet** (`legacyDirs` in the ESLint factory, documented tsconfig relaxations) that downgrades modernization rules to warnings for listed legacy directories — the list may only ever shrink.
 
@@ -74,7 +74,15 @@ my-app/
 ├── renovate.json                 # extends shared preset
 ├── playwright.config.ts          # harness factory
 ├── CLAUDE.md                     # agent contract: layered guideline reading order
-├── .claude/skills/verify-project/SKILL.md
+├── AGENTS.md                     # thin pointer to CLAUDE.md for non-Claude agents
+├── .claude/
+│   ├── settings.json             # pre-approved safe commands (lint/test/build/doctor/…)
+│   ├── skills/
+│   │   ├── verify-project/SKILL.md
+│   │   ├── new-feature/SKILL.md
+│   │   ├── modernize-legacy/SKILL.md
+│   │   └── update-harness/SKILL.md
+│   └── agents/harness-reviewer.md
 ├── docs/guidelines/              # LAYER 1: project-specific rules (win on conflict)
 └── .github/workflows/ci.yml      # calls reusable harness workflow
 ```
@@ -1240,12 +1248,20 @@ apply them in this order:
 
 Rules for coding agents (Claude Code and similar) working in harness projects.
 
-- Entry point is the project's `CLAUDE.md`. It pins the guideline reading
-  order: core guidelines (Layer 0) first, then `docs/guidelines/` (Layer 1);
-  project wins on conflict.
+- Entry point is the project's `CLAUDE.md` (mirrored for other agents by
+  `AGENTS.md`). It pins the guideline reading order: core guidelines
+  (Layer 0) first, then `docs/guidelines/` (Layer 1); project wins on
+  conflict.
+- The harness generates a project agent toolkit under `.claude/`: skills
+  (`verify-project`, `new-feature`, `modernize-legacy`, `update-harness`),
+  the `harness-reviewer` subagent, and pre-approved safe permissions.
+  The toolkit is project-owned (Layer 1) — projects may extend it, but
+  `verify-project` must stay a superset of the harness definition of done.
 - Before claiming any task complete, run the project verify skill
   (`.claude/skills/verify-project/`): lint, unit tests, build, doctor —
   and e2e when the change touches routing, templates, or user flows.
+- Before committing significant changes, dispatch `harness-reviewer` on the
+  diff and address its findings.
 - Agents follow TDD like humans: failing test first, then implementation.
 - Agents never weaken enforcement to get green: no disabling ESLint rules
   inline without a comment explaining why, no editing `sheriff.config.ts`
@@ -1286,6 +1302,11 @@ Rules for coding agents (Claude Code and similar) working in harness projects.
       "type": "boolean",
       "default": true,
       "description": "Whether Sheriff module-boundary enforcement is enabled."
+    },
+    "agents": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the generated agent meta-layer (.claude/, AGENTS.md) is part of this project."
     },
     "ci": {
       "type": "object",
@@ -1406,6 +1427,9 @@ function compliantProject(): void {
   write("eslint.config.mjs", "export default [];");
   write("sheriff.config.ts", "export const config = {};");
   write("CLAUDE.md", "# CLAUDE.md");
+  write("AGENTS.md", "# AGENTS.md");
+  write(".claude/settings.json", "{}");
+  write(".claude/skills/verify-project/SKILL.md", "---\nname: verify-project\n---");
   write("lefthook.yml", "pre-commit:");
   write("commitlint.config.mjs", "export default {};");
   write("renovate.json", "{}");
@@ -1492,6 +1516,17 @@ describe("runDoctor", () => {
     rmSync(join(root, "sheriff.config.ts"));
     expect(runDoctor(root).every((f) => f.ok)).toBe(true);
   });
+
+  it("does not require the agent layer when agents is false", () => {
+    compliantProject();
+    write(
+      "harness.config.json",
+      JSON.stringify({ harnessVersion: "v0.1.0", prefix: "demo", boundaries: true, agents: false }),
+    );
+    rmSync(join(root, ".claude"), { recursive: true });
+    rmSync(join(root, "AGENTS.md"));
+    expect(runDoctor(root).every((f) => f.ok)).toBe(true);
+  });
 });
 ```
 
@@ -1516,6 +1551,7 @@ interface HarnessConfig {
   harnessVersion?: string;
   prefix?: string;
   boundaries?: boolean;
+  agents?: boolean;
   ci?: { e2e?: boolean; audit?: boolean; nodeVersion?: string };
 }
 
@@ -1570,6 +1606,9 @@ export function runDoctor(root: string): DoctorFinding[] {
   const required = [...ALWAYS_REQUIRED_FILES];
   if (config?.boundaries !== false) required.push("sheriff.config.ts");
   if (config?.ci?.e2e !== false) required.push("playwright.config.ts");
+  if (config?.agents !== false) {
+    required.push("AGENTS.md", ".claude/settings.json", ".claude/skills/verify-project/SKILL.md");
+  }
   for (const file of required) {
     add(`required file: ${file}`, existsSync(join(root, file)), "missing");
   }
@@ -1789,6 +1828,11 @@ pnpm add -D --filter @treinberger/harness-schematics typescript
       "type": "boolean",
       "description": "Scaffold Sheriff module-boundary enforcement.",
       "default": true
+    },
+    "agents": {
+      "type": "boolean",
+      "description": "Scaffold the agent meta-layer (.claude/ toolkit, AGENTS.md).",
+      "default": true
     }
   },
   "required": []
@@ -1806,7 +1850,8 @@ Files use schematics template syntax (`<%= prefix %>`). Every file carries a `.t
   "$schema": "https://raw.githubusercontent.com/treinberger/angular-harness/main/schemas/harness.config.schema.json",
   "harnessVersion": "<%= harnessVersion %>",
   "prefix": "<%= prefix %>",
-  "boundaries": <%= boundaries %>
+  "boundaries": <%= boundaries %>,
+  "agents": <%= agents %>
 }
 ```
 
@@ -1928,9 +1973,21 @@ This project uses the treinberger Angular harness
 
 ## Definition of done
 
-Run the verify skill (`.claude/skills/verify-project/`) before claiming any
-task complete: lint + test + build + doctor, plus e2e for user-facing changes.
+Before claiming any task complete: `pnpm lint && pnpm test && pnpm build &&
+pnpm doctor`, plus `pnpm e2e` for user-facing changes<% if (agents) { %> —
+codified in the verify-project skill (`.claude/skills/verify-project/`)<% } %>.
+<% if (agents) { %>
+## Agent toolkit (generated by the harness)
 
+- Skills: `verify-project` (definition of done), `new-feature`
+  (harness-compliant feature scaffold), `modernize-legacy` (shrink the
+  brownfield baseline), `update-harness` (lockstep harness updates).
+- Subagent: `harness-reviewer` (`.claude/agents/`) — dispatch it on the
+  diff before committing significant changes.
+- `.claude/settings.json` pre-approves the safe project commands.
+- These files are project-owned (Layer 1): extend them freely, but keep the
+  verify-project steps a superset of the harness definition of done.
+<% } %>
 ## Hard rules
 
 - Selector prefix: `<%= prefix %>` (see `harness.config.json`).
@@ -1963,6 +2020,174 @@ Run in this order; stop and fix on the first failure:
 
 Only report success after every applicable step passes. Quote the failing
 output verbatim when reporting a failure.
+```
+
+`src/ng-add/files/.claude/settings.json.template` (only when `agents`; not a
+schematic template in content, but keeps the `.template` suffix like all
+scaffolded files):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm lint)",
+      "Bash(pnpm test)",
+      "Bash(pnpm build)",
+      "Bash(pnpm doctor)",
+      "Bash(pnpm e2e)",
+      "Bash(pnpm install)",
+      "Bash(pnpm exec ng generate *)",
+      "Bash(pnpm exec prettier *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)"
+    ]
+  }
+}
+```
+
+`src/ng-add/files/.claude/skills/new-feature/SKILL.md.template` (only when `agents`):
+
+```markdown
+---
+name: new-feature
+description: Use when adding a new feature area to this app - scaffolds the harness-compliant feature structure (lazy route, standalone component, signal store, tests) under src/app/features/
+---
+
+# New Feature
+
+1. Ask for the feature name if not given (kebab-case, e.g. `order-history`).
+2. Generate the component (project defaults already enforce standalone +
+   OnPush):
+
+       pnpm exec ng generate component features/<name>/<name> --flat=false
+
+3. Create `src/app/features/<name>/<name>.routes.ts`:
+
+       import { Routes } from '@angular/core';
+       import { <Pascal>Component } from './<name>/<name>.component';
+
+       export const <camel>Routes: Routes = [
+         { path: '', component: <Pascal>Component },
+       ];
+
+4. Register it lazily in `src/app/app.routes.ts`:
+
+       {
+         path: '<name>',
+         loadChildren: () =>
+           import('./features/<name>/<name>.routes').then((m) => m.<camel>Routes),
+       },
+
+5. If the feature holds cross-component state, add a signal store service
+   `src/app/features/<name>/<name>.store.ts`:
+
+       import { Injectable, computed, signal } from '@angular/core';
+
+       @Injectable({ providedIn: 'root' })
+       export class <Pascal>Store {
+         private readonly state = signal<{ loading: boolean }>({ loading: false });
+         readonly loading = computed(() => this.state().loading);
+       }
+
+6. Write the component spec with `renderWithHarness` (TDD: spec first for
+   any real behavior).
+7. Boundaries: the scaffolded `sheriff.config.ts` already tags
+   `src/app/features/<feature>` — no change needed unless this feature must
+   depend on another feature; that requires a documented decision in
+   `docs/guidelines/`, not an ad-hoc depRules edit.
+8. Run the verify-project skill.
+```
+
+`src/ng-add/files/.claude/skills/modernize-legacy/SKILL.md.template` (only when `agents`):
+
+```markdown
+---
+name: modernize-legacy
+description: Use when asked to modernize legacy code or shrink the legacy baseline - upgrades one legacy scope to the full harness standard and ratchets legacyDirs / legacy-baseline.md
+---
+
+# Modernize Legacy
+
+1. Read `eslint.config.mjs` (`legacyDirs`) and
+   `docs/guidelines/legacy-baseline.md`. If both are empty, report that
+   there is nothing to modernize and stop.
+2. Pick ONE scope: the one the user named, else the smallest remaining
+   `legacyDirs` entry.
+3. Run the official Angular migrations scoped to that path where supported
+   (standalone, control-flow, inject, signal-inputs, output-migration);
+   commit each separately.
+4. Temporarily remove the scope from `legacyDirs`, run `pnpm lint`, and fix
+   every remaining error the harness rules report (OnPush, signals,
+   accessibility). TDD for behavior changes.
+5. Keep the scope removed from `legacyDirs`, update its row in
+   `legacy-baseline.md` (remove it, or mark the exit criterion met), and if
+   a tsconfig flag was relaxed only for this scope, re-tighten and rebuild.
+6. Run the verify-project skill; commit as
+   `refactor(<scope>): modernize to harness standard`.
+
+Never grow `legacyDirs` or the baseline table — this skill only shrinks.
+```
+
+`src/ng-add/files/.claude/skills/update-harness/SKILL.md.template` (only when `agents`):
+
+```markdown
+---
+name: update-harness
+description: Use when updating the harness packages ("update harness", reviewing a Renovate harness PR) - bumps @treinberger/harness-* in lockstep, runs ng update migrations, syncs harnessVersion, verifies
+---
+
+# Update Harness
+
+1. `pnpm up '@treinberger/harness-*' --latest` — the packages version in
+   lockstep; mixed versions will fail `pnpm doctor`.
+2. Read the harness changelog for the new version
+   (https://github.com/treinberger/angular-harness/releases). If it
+   announces migrations: `pnpm exec ng update @treinberger/harness-schematics`.
+3. Set `harnessVersion` in `harness.config.json` to the matching tag.
+4. If the changelog announces guideline changes, read the changed core
+   guideline files and check `docs/guidelines/` for project overrides that
+   now conflict; surface conflicts to the user instead of silently picking.
+5. Run the verify-project skill; commit as
+   `chore: update harness to <version>`.
+```
+
+`src/ng-add/files/.claude/agents/harness-reviewer.md.template` (only when `agents`):
+
+```markdown
+---
+name: harness-reviewer
+description: Reviews a diff against the harness core guidelines and this project's Layer-1 guidelines. Use proactively before committing significant changes.
+tools: Read, Grep, Glob, Bash
+---
+
+You review changes in a harness-governed Angular project. Read the diff
+(`git diff` / `git diff --staged`), the harness core guidelines (version
+pinned in `harness.config.json`), and every file in `docs/guidelines/`
+(project layer wins on conflict). Then check the diff for:
+
+1. Correctness: bugs, broken edge cases, missing error handling.
+2. Harness style: OnPush, signals-first, native control flow, `inject()`,
+   selector prefix, standalone.
+3. Boundaries: no cross-feature imports, no `HttpClient` in components.
+4. Testing: behavior-level tests exist for behavior changes; bugfixes carry
+   a regression test.
+5. Ratchet: `legacyDirs`, `legacy-baseline.md`, tsconfig, and shared
+   configs must not have been loosened.
+
+Report findings ranked by severity, each with file:line, the guideline it
+violates, and a concrete fix. If the diff is clean, say so explicitly.
+Report findings only — do not edit files.
+```
+
+`src/ng-add/files/AGENTS.md.template` (only when `agents`):
+
+```markdown
+# AGENTS.md
+
+Agent instructions for this project live in [CLAUDE.md](CLAUDE.md) — they
+apply to any coding agent, not only Claude. Read that file, then the
+guideline layers it points to, before making changes.
 ```
 
 `src/ng-add/files/.github/workflows/ci.yml.template`:
@@ -2021,7 +2246,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const collectionPath = join(here, "..", "collection.json");
 
-const DEFAULT_OPTIONS = { prefix: "demo", e2e: true, boundaries: true };
+const DEFAULT_OPTIONS = { prefix: "demo", e2e: true, boundaries: true, agents: true };
 
 function baseAppTree(): Tree {
   const tree = Tree.empty();
@@ -2071,7 +2296,13 @@ describe("ng-add", () => {
       "/renovate.json",
       "/docs/guidelines/README.md",
       "/CLAUDE.md",
+      "/AGENTS.md",
+      "/.claude/settings.json",
       "/.claude/skills/verify-project/SKILL.md",
+      "/.claude/skills/new-feature/SKILL.md",
+      "/.claude/skills/modernize-legacy/SKILL.md",
+      "/.claude/skills/update-harness/SKILL.md",
+      "/.claude/agents/harness-reviewer.md",
       "/.github/workflows/ci.yml",
       "/playwright.config.ts",
       "/e2e/smoke.spec.ts",
@@ -2130,6 +2361,19 @@ describe("ng-add", () => {
     expect(pkg.scripts.e2e).toBeUndefined();
   });
 
+  it("skips the agent layer when agents is false but keeps CLAUDE.md", async () => {
+    const tree = await runner.runSchematic(
+      "ng-add",
+      { ...DEFAULT_OPTIONS, agents: false },
+      baseAppTree(),
+    );
+    expect(tree.exists("/AGENTS.md")).toBe(false);
+    expect(tree.exists("/.claude/settings.json")).toBe(false);
+    expect(tree.exists("/.claude/skills/verify-project/SKILL.md")).toBe(false);
+    expect(tree.exists("/CLAUDE.md")).toBe(true);
+    expect(tree.readText("/CLAUDE.md")).not.toContain("Agent toolkit");
+  });
+
   it("skips sheriff when boundaries is false", async () => {
     const tree = await runner.runSchematic(
       "ng-add",
@@ -2171,6 +2415,7 @@ interface NgAddOptions {
   prefix: string;
   e2e: boolean;
   boundaries: boolean;
+  agents: boolean;
 }
 
 const CORE_DEV_DEPS: Record<string, string> = {
@@ -2200,6 +2445,10 @@ const E2E_DEV_DEPS: Record<string, string> = {
 const E2E_FILES = ["playwright.config.ts.template", "e2e/smoke.spec.ts.template"];
 const BOUNDARY_FILES = ["sheriff.config.ts.template"];
 
+function isAgentFile(rel: string): boolean {
+  return rel.startsWith(".claude/") || rel === "AGENTS.md.template";
+}
+
 function scaffoldFiles(options: NgAddOptions): Rule {
   return mergeWith(
     apply(url("./files"), [
@@ -2207,12 +2456,14 @@ function scaffoldFiles(options: NgAddOptions): Rule {
         const rel = path.startsWith("/") ? path.slice(1) : path;
         if (!options.e2e && E2E_FILES.includes(rel)) return false;
         if (!options.boundaries && BOUNDARY_FILES.includes(rel)) return false;
+        if (!options.agents && isAgentFile(rel)) return false;
         return true;
       }),
       applyTemplates({
         prefix: options.prefix,
         e2e: options.e2e,
         boundaries: options.boundaries,
+        agents: options.agents,
         harnessVersion: HARNESS_VERSION,
       }),
       // strip the .template suffix
@@ -2295,12 +2546,16 @@ Expected: all schematic tests PASS (root vitest `include` pattern `packages/*/te
     ng add @treinberger/harness-schematics --prefix=myapp
 
 Scaffolds: `harness.config.json`, `eslint.config.mjs`, `sheriff.config.ts`,
-`lefthook.yml` + commitlint, `renovate.json`, `CLAUDE.md` +
-`.claude/skills/verify-project/`, `docs/guidelines/`, CI workflow,
-Playwright config with an a11y smoke test (unless `--e2e=false`); extends
-`tsconfig.json`, registers the shared Prettier config, installs all deps.
+`lefthook.yml` + commitlint, `renovate.json`, `docs/guidelines/`, CI
+workflow, Playwright config with an a11y smoke test (unless `--e2e=false`),
+and the agent meta-layer: `CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`,
+skills (`verify-project`, `new-feature`, `modernize-legacy`,
+`update-harness`) and the `harness-reviewer` subagent (unless
+`--agents=false`); extends `tsconfig.json`, registers the shared Prettier
+config, installs all deps.
 
-Flags: `--prefix=<p>` (default `app`), `--e2e=false`, `--boundaries=false`.
+Flags: `--prefix=<p>` (default `app`), `--e2e=false`, `--boundaries=false`,
+`--agents=false`.
 
 ## Updates
 
@@ -2761,6 +3016,7 @@ jobs:
 | tsconfig | `compilerOptions` in the project `tsconfig.json` (wins over base) |
 | Playwright | extra options passed to `defineHarnessPlaywrightConfig` |
 | A11y checks | `disableRules` per call, with a comment explaining why |
+| Agent layer | edit/add skills under `.claude/skills/` and project rules in `CLAUDE.md` below the harness block; keep verify-project a superset of the harness definition of done |
 | Renovate | additional `packageRules` after the `extends` entry |
 | Hooks | edit `lefthook.yml`; `LEFTHOOK=0 git commit` for WIP on private branches |
 | CI | inputs of the reusable workflow (`e2e`, `audit`, `node-version`); extra jobs alongside `harness-ci` |
@@ -2967,7 +3223,8 @@ After the release workflow publishes, update consuming docs/templates if any res
 5. **Brownfield proof:** Take (or synthesize) an NgModule-based Angular app with `*ngIf` templates and constructor DI; follow `docs/adopting-existing-project.md`. After the migrations plus a `legacyDirs` entry for one deliberately unmigrated directory, `pnpm lint` must be green with warnings confined to that directory, and `legacy-baseline.md` must exist.
 6. **Naming consistency:** grep the repo for `@treinberger/harness-` — every reference must match the six package names exactly.
 7. **No placeholders:** grep shipped files for `TODO`, `TBD`, `FIXME` — none may remain.
-8. **Agent entry points in sync:** the repo-root `CLAUDE.md` (Job A/B runbook) and `.claude/skills/harness-setup/SKILL.md` predate implementation — verify every file they reference now exists (`docs/consuming-a-project.md`, `docs/adopting-existing-project.md`) and that their preflight command matches the published package name; fix anything that moved.
+8. **Agent-layer proof:** In the demo app, every scaffolded `.claude/` file exists with valid frontmatter (`name`, `description`), `CLAUDE.md` lists the toolkit, and a Claude Code session in the demo app can trigger `verify-project` and run it green; `--agents=false` scaffolds cleanly without any `.claude/`/`AGENTS.md` and doctor stays green.
+9. **Agent entry points in sync:** the repo-root `CLAUDE.md` (Job A/B runbook) and `.claude/skills/harness-setup/SKILL.md` predate implementation — verify every file they reference now exists (`docs/consuming-a-project.md`, `docs/adopting-existing-project.md`) and that their preflight command matches the published package name; fix anything that moved.
 
 ## Known risks / decisions already made
 
